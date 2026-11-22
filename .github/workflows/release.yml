@@ -21,6 +21,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4   # required before ./ local actions — runner reads action.yml from the workspace
       - uses: ./.github/actions/npm-test
 
   release:
