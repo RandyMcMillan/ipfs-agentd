@@ -1,0 +1,84 @@
+name: interop
+
+# Live interop: one runner hosts two independent ipfs-agentd nodes plus the real
+# git-remote-gnostr CLI helper from helia-ipfs-relay.
+#   1. publisher daemon seeds a git bundle for INTEROP_LIVE_SECS and re-announces
+#      it on the real "gnostr" topic every 15s (externally observable)
+#   2. a second, independent node fetches the bundle by CID (bitswap, direct dial)
+#      and by name (topic discovery)
+#   3. the real git-remote-gnostr helper clones gnostr://cid/<CID> with plain git
+# The job then waits out the live window so external peers can confirm the ad.
+
+on:
+  push:
+    branches: ['feat/**']
+  workflow_dispatch:
+    inputs:
+      live_seconds:
+        description: 'How long the publisher keeps seeding (seconds)'
+        default: '900'
+
+env:
+  INTEROP_LIVE_SECS: ${{ github.event.inputs.live_seconds || '900' }}
+
+jobs:
+  live-interop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+
+      - name: Start publisher daemon (background seeder)
+        run: |
+          mkdir -p /tmp/interop
+          GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4011 \
+          INTEROP_REPO=$GITHUB_WORKSPACE \
+          INTEROP_NAME=ipfs-agentd-ci-${{ github.run_id }} \
+          node test/interop-publisher.mjs 2>/tmp/interop/publisher.log &
+          echo $! > /tmp/interop-pub.pid
+          echo "publisher pid $(cat /tmp/interop-pub.pid), live window ${{ env.INTEROP_LIVE_SECS }}s"
+
+      - name: Wait for publisher readiness
+        timeout-minutes: 3
+        run: |
+          for i in $(seq 1 60); do [ -f /tmp/interop/cid ] && break; sleep 2; done
+          if [ ! -f /tmp/interop/cid ]; then echo 'publisher did not become ready'; tail -50 /tmp/interop/publisher.log; exit 1; fi
+          echo "CID=$(cat /tmp/interop/cid)" >> "$GITHUB_ENV"
+          echo "PEER=$(cat /tmp/interop/peer)" >> "$GITHUB_ENV"
+          echo "NAME=$(cat /tmp/interop/name)" >> "$GITHUB_ENV"
+          echo "publisher ready: name=$NAME cid=$CID peer=$PEER"
+
+      - name: Cross-daemon fetch (independent node, bitswap + topic discovery)
+        timeout-minutes: 6
+        run: GNOSTR_BOOTSTRAP=/ip4/127.0.0.1/tcp/4011/p2p/$PEER node test/interop-fetch.mjs
+
+      - name: git-remote-gnostr interop (real CLI helper clone)
+        timeout-minutes: 12
+        run: |
+          git clone -q https://github.com/RandyMcMillan/helia-ipfs-relay /tmp/relay
+          cd /tmp/relay && npm install --no-audit --no-fund
+          mkdir -p "$HOME/.local/bin"
+          cp git-remote-gnostr.js "$HOME/.local/bin/git-remote-gnostr"
+          chmod +x "$HOME/.local/bin/git-remote-gnostr"
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "cloning gnostr://cid/$CID via git-remote-gnostr…"
+          GNOSTR_BOOTSTRAP="/ip4/127.0.0.1/tcp/4011/p2p/$PEER" timeout 300 git clone "gnostr://cid/$CID" /tmp/interop-clone
+          test -f /tmp/interop-clone/package.json
+          test -f /tmp/interop-clone/src/mcp-server.js
+          echo 'cloned tree head:'
+          git -C /tmp/interop-clone log --oneline | head -5
+
+      - name: Live window — publisher keeps seeding (external confirmation open)
+        timeout-minutes: 25
+        run: |
+          echo "::notice::LIVE name=$NAME bundle=$CID peer=$PEER — ad on gnostr topic, seeding for ${{ env.INTEROP_LIVE_SECS }}s total"
+          echo "tail of publisher log:"
+          tail -5 /tmp/interop/publisher.log
+          while kill -0 "$(cat /tmp/interop-pub.pid)" 2>/dev/null; do sleep 15; done
+          echo "publisher exited — full log:"
+          cat /tmp/interop/publisher.log
