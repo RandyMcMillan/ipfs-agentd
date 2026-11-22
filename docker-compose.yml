@@ -1,0 +1,52 @@
+# One service instance per block. Each instance mounts its own repos and
+# serves a GitHub-like view at its port. No GitHub (or any third party)
+# required — clone URLs are gnostr:// / ipfs://, announcements ride the
+# gossipsub topic.
+#
+#   docker compose up instance-a        # human team instance
+#   docker compose --profile public up public-instance   # + gnostr publish
+#
+# Override per instance:
+#   SERVE_NAME   instance id shown in the header          (default: service name)
+#   PUBLISH=1    announce every repo on GNOSTR_TOPIC and show bundle CIDs/addrs
+#   GNOSTR_LISTEN=/ip4/0.0.0.0/tcp/4001  make the swarm publicly dialable
+#   GNOSTR_BOOTSTRAP=…                   extra peers to dial at boot
+#   IPFS_AGENTD_REPO=/data/agent-store   daemon blockstore (publish mode)
+
+services:
+  instance-a:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./repos/a:/data/repos        # one mount point per repo, per instance
+      # - /srv/another-repo:/data/repos/another-repo
+    environment:
+      SERVE_NAME: team-a
+      PUBLISH: "1"
+      GNOSTR_TOPIC: gnostr
+    restart: unless-stopped
+
+  # second, isolated instance — its own repos, its own view
+  instance-b:
+    build: .
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./repos/b:/data/repos
+    environment:
+      SERVE_NAME: team-b
+      PUBLISH: "1"
+      GNOSTR_TOPIC: gnostr
+    restart: unless-stopped
+
+  # plain MCP stdio daemon in a container (attach your agent client)
+  daemon:
+    profiles: ["agent"]
+    build: .
+    command: ["node", "src/mcp-server.js", "--repo", "/data/agent-store"]
+    volumes:
+      - agent-store:/data/agent-store
+
+volumes:
+  agent-store:

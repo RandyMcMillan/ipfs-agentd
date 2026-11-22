@@ -1,0 +1,11 @@
+node_modules
+npm-debug.log
+.git
+.github
+test
+*.md
+!README.md
+Dockerfile
+docker-compose.yml
+.nvmrc
+/tmp

@@ -3,6 +3,7 @@
  *
  *   ipfs-agentd [daemon] [daemon flags]   MCP stdio daemon (default)
  *   ipfs-agentd chat [--topic gnostr] [--name alice] [--repo path] [--logging L]
+ *   ipfs-agentd serve [--root /data/repos] [--port 8080] [--publish]
  *   ipfs-agentd --help
  *
  * Always run through an interpreter (`node src/bin.js …`) — packed/plugin
@@ -17,6 +18,11 @@ Usage:
   ipfs-agentd chat [--topic <topic>] [--name <name>] [--repo <path>] [--logging <level>]
       Human <-> agent / agent <-> agent chat on a gossipsub topic.
       Envelope: {"type":"chat","name","text","at"} (UTF-8 JSON).
+  ipfs-agentd serve [--root <dir>] [--port <port>] [--host <addr>] [--name <id>]
+                    [--publish] [--topic <topic>] [--logging <level>]
+      GitHub-like repo browser for humans + agents. Each subdir of --root is
+      a repo (bare, working clone, or .bundle). --publish announces every
+      repo on the gnostr topic and shows clone URLs on the repo pages.
   ipfs-agentd --help    Show this help.
 `
 
@@ -27,6 +33,9 @@ if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
 } else if (cmd === 'chat') {
   const { chatMain } = await import('./cli.js')
   await chatMain(rest)
+} else if (cmd === 'serve') {
+  const { serveMain } = await import('./web.js')
+  await serveMain(rest)
 } else if (cmd === 'daemon') {
   const { main } = await import('./daemon.js')
   await main(rest)
