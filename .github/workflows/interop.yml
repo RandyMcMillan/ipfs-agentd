@@ -15,6 +15,9 @@ name: interop
 on:
   workflow_dispatch:
     inputs:
+      ref:
+        description: 'Branch or tag to check out and interop-test (e.g. master, v0.3.2)'
+        default: 'master'
       live_seconds:
         description: 'How long the publisher keeps seeding (seconds)'
         default: '900'
@@ -64,6 +67,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Node (unix — nvm per .nvmrc)
         if: runner.os != 'Windows'
