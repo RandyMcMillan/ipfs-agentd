@@ -29,6 +29,8 @@ import { gossipsub } from '@libp2p/gossipsub'
 import { bootstrap } from '@libp2p/bootstrap'
 import { kadDHT } from '@libp2p/kad-dht'
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2'
+import { autoNAT } from '@libp2p/autonat'
+import { dcutr } from '@libp2p/dcutr'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -47,7 +49,14 @@ const BOOTSTRAP_LIST = [
 export const DEFAULT_REPO = process.env.IPFS_AGENTD_REPO || join(homedir(), '.ipfs-agentd')
 
 /* create + start the node. never throws for "no peers yet" — callers get a
- * node that fills in connections as bootstrap dials land. */
+ * node that fills in connections as bootstrap dials land.
+ *
+ * Reachability: every publicly reachable Kubo node (including the bootstrap
+ * list) runs a relay v2 server by default. discoverRelays asks connected
+ * peers for reservations and advertises /p2p-circuit addresses, so NAT'd
+ * agents are dialable through the swarm; dcutr then tries to upgrade relayed
+ * connections to direct ones (real hole punching), autonat reports whether
+ * the node is publicly dialable at all. */
 export async function createAgentNode ({ repoPath = DEFAULT_REPO, log = () => {} } = {}) {
   log('repo: ' + repoPath)
   const blockstore = new FsBlockstore(join(repoPath, 'blocks'))
@@ -60,8 +69,9 @@ export async function createAgentNode ({ repoPath = DEFAULT_REPO, log = () => {}
     blockstore,
     datastore,
     libp2p: {
-      addresses: { listen },
-      transports: [tcp(), webSockets(), circuitRelayTransport()],
+      /* relay reservations land under /p2p-circuit; explicit listeners come from GNOSTR_LISTEN */
+      addresses: { listen: [...listen, '/p2p-circuit'] },
+      transports: [tcp(), webSockets(), circuitRelayTransport({ discoverRelays: 2 })],
       connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
       peerDiscovery: [bootstrap({ list: BOOTSTRAP_LIST })],
@@ -70,7 +80,9 @@ export async function createAgentNode ({ repoPath = DEFAULT_REPO, log = () => {}
         ping: ping(),
         /* client mode: safe behind NAT; does not publish undialable DHT records */
         dht: kadDHT({ clientMode: true }),
-        pubsub: gossipsub({ emitSelf: true })   /* agents see their own publishes in ipfs_pubsub_pull */
+        pubsub: gossipsub({ emitSelf: true }),   /* agents see their own publishes in ipfs_pubsub_pull */
+        autonat: autoNAT(),
+        dcutr: dcutr()
       }
     }
   })
@@ -78,8 +90,13 @@ export async function createAgentNode ({ repoPath = DEFAULT_REPO, log = () => {}
   const node = helia.libp2p
   log('peer id: ' + node.peerId.toString())
   const addrs = node.getMultiaddrs().map((a) => a.toString())
-  if (addrs.length === 0) log('listening: (none — pure client, dialing out only)')
+  if (addrs.length === 0) log('listening: (none yet — relay reservations still landing)')
   for (const a of addrs) log('listening: ' + a)
+  node.addEventListener('connection:prune', (e) => log('connection:prune ' + (e.detail?.remotePeer?.toString?.() || e.detail?.remoteAddr?.toString?.() || 'peer?')))
+  node.addEventListener('connection:close', (e) => {
+    const conn = e.detail
+    if (conn.remoteAddr.toString().includes('/p2p-circuit/')) log('connection:close (relayed) ' + conn.remotePeer.toString())
+  })
 
   /* IPNS: helia routing (DHT, client mode) + pubsub router, which works even client-side */
   const namesys = ipns(helia, { routers: [ipnsHelia(helia), ipnsPubsub(helia)] })
