@@ -88,6 +88,68 @@ Caveats: publishing with zero pubsub peers returns `published:false` (bundle is 
 IPFS and pinned — republish when peers connect). The daemon is the bitswap seeder while
 alive; stop it and the bundle is only fetchable if someone else pinned the CID.
 
+### git remote helpers
+
+This repo ships two git remote helpers (package bins, `npm link` to install):
+
+```sh
+git clone gnostr://<repo-name>      # named, discoverable over the gnostr topic
+git clone gnostr://cid/<bundle-cid> # content-addressed, nothing to shadow
+git clone ipfs://<bundle-cid>       # content-addressed, no topic at all
+```
+
+`git-remote-gnostr` is wire-compatible with
+[helia-ipfs-relay](https://github.com/RandyMcMillan/helia-ipfs-relay)'s helper (same ad
+format, same URL forms) but is built on this repo's own node factory — no duplicated
+libp2p stack. `git-remote-ipfs` is the content-addressed-only variant: no pubsub, just
+bitswap. Both are fetch-only (push is refused) and snapshot-based (each clone re-fetches
+the whole bundle). Helpers keep their own block cache at `~/.ipfs-agentd-git`
+(`IPFS_AGENTD_GIT_REPO` to override), so repeat clones of the same repo hit local blocks.
+
+Seeder reachability: discovery is gossipsub for `gnostr://<name>` and pure bitswap for
+the CID forms — in both cases the fetcher must be able to connect to the seeder. Dial it
+explicitly with `GNOSTR_BOOTSTRAP=/ip4/…/tcp/…/p2p/<peerId>` (the `ipfs_id` tool reports
+the publisher's addrs), or run the publisher with `GNOSTR_LISTEN` on a public host.
+
+## Repo web service (`ipfs-agentd serve`)
+
+GitHub-like repo browser for humans **and** agents — no GitHub (or any third
+party) involved. Each subdir of `--root` is a repo (bare repo, working clone,
+or `.bundle` file — bundles are materialized automatically):
+
+```sh
+ipfs-agentd serve --root /data/repos --port 8080 --name team
+ipfs-agentd serve --root /data/repos --publish        # also announce on gnostr
+```
+
+- `/` — instance home: repo cards, agent instructions (MCP config snippet, chat topic)
+- `/<repo>` — file table, rendered README, latest commit, **clone box**
+  (`gnostr://<name>` + `ipfs://<bundle-cid>` when publishing), `.bundle` download
+- `/<repo>/tree|blob|raw/<ref>/<path>` — browsing with line numbers, raw bytes
+- `/<repo>/commits/<ref>` — commit history; `/<repo>/bundle` — on-the-fly bundle
+
+With `--publish`, every repo is announced on the gnostr topic (via
+`git_publish_repo`) and the repo page shows the bundle CID and publisher
+addrs — the page humans browse is exactly what an agent needs to dial/clone.
+
+### Docker
+
+`Dockerfile` (all-in-one: web service default CMD; MCP daemon and chat CLI
+via `command:` override) + `docker-compose.yml`. One container = one instance;
+mount repos per instance:
+
+```sh
+docker build -t ipfs-agentd .
+docker run -p 8080:8080 -v /srv/myrepo:/data/repos/myrepo ipfs-agentd
+docker run -p 8080:8080 -v /srv/myrepo:/data/repos/myrepo \
+  -e PUBLISH=1 -e GNOSTR_LISTEN=/ip4/0.0.0.0/tcp/4001 ipfs-agentd
+```
+
+`docker compose up instance-a` / `instance-b` runs two isolated instances with
+their own mounts; `--profile agent` runs the plain MCP daemon. The image is
+verified locally (build + container serving a mounted bare repo with clone
+URLs rendered).
+
 ## Env
 
 | Var | Default | Purpose |
@@ -121,8 +183,14 @@ alive; stop it and the bundle is only fetchable if someone else pinned the CID.
 - Phase 3 (done): git bridge — `git_publish_repo` / `git_fetch_bundle`, gnostr-wire-compatible.
 - Phase 4 (done): `ipfs-agentd` CLI binary — gossipsub topic chat (human ↔ agent ↔
   agent, shared `{type:'chat',name,text,at}` envelope) + `--logging` level flag.
-  Verified: `git clone gnostr://cid/<CID>` and `gnostr://<name>` both work
-  through helia-ipfs-relay's real `git-remote-gnostr` helper (fsck-clean).
+- Phase 5 (done): git remote helpers shipped in-repo — `git-remote-gnostr`
+  (wire-compatible with helia-ipfs-relay, built on this repo's node factory) and
+  `git-remote-ipfs` (content-addressed only). e2e-tested with real `git clone`
+  (both URL forms, fsck-clean, `test/git-remote-e2e.mjs`).
+- Phase 6 (done): repo web service (`ipfs-agentd serve`) — GitHub-like browser,
+  per-instance repo mounts, `--publish` announces on gnostr; Dockerfile +
+  docker-compose (one instance per container). e2e: `test/web-e2e.mjs`; image
+  build + container smoke verified locally.
 - Future: remote-pinning backup for durability; named IPNS key reuse; dual-role relay.
 
 ## CI

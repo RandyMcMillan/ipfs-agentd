@@ -56,9 +56,15 @@ host gives direct dialability instead.
     parsing (`--repo`, `--logging`, `--quiet`). Tool-call logging is at
     `debug` level; lifecycle/peer events at `info`.
   - `src/mcp-server.js` — thin entry: `main()` from `src/daemon.js`.
-  - `src/bin.js` — CLI dispatcher: `daemon` (default) / `chat` / `--help`.
+  - `src/bin.js` — CLI dispatcher: `daemon` (default) / `chat` / `serve` / `--help`.
   - `src/cli.js` — gossipsub chat REPL (envelope `{type:'chat',name,text,at}`;
     prints `listen:`/`listen(relayed):` lines so scripts/agents can attach).
+  - `src/web.js` — GitHub-like repo browser (`serve`): node:http + git CLI
+    only, zero third-party deps; markdown renderer escapes-first (XSS-safe).
+    One subdir of `--root` per repo; `.bundle` files materialize to a cache
+    dir inside the root (skipped by the scanner — no HEAD/.git at its top).
+  - `src/git-remote-helper.js` — shared machinery for the two git remote
+    helpers (boot/fetch/materialize/serve protocol).
   - `src/logger.js` — leveled stderr logger shared by daemon and CLI.
 - **Dependency rules (hard-won, see commit history):**
   - `blockstore-fs@^4` + `datastore-fs@^12` — the only versions matching helia
@@ -68,6 +74,10 @@ host gives direct dialability instead.
   - Several `multiformats` copies coexist: pass CID **strings** to
     `@helia/unixfs`, CID **instances** to `helia.pins`.
   - Keep `@libp2p/*` pins aligned with helia-ipfs-relay's package.json.
+- **No silent errors in tests:** a test that spawns a child (CLI, server,
+  helper) must surface the child's stderr whenever the child dies or the
+  check fails — see `test/web-e2e.mjs` ("child exited early — stderr: …").
+  A green-looking run over a dead child process is the worst outcome.
 - **Adding a tool:** implement in `src/tools.js` (pure async function, JSON
   args/result, throw on error), register in `src/daemon.js` with a zod
   schema, add a check to `test/smoke.mjs`, bump the tools count assertion in
@@ -93,10 +103,22 @@ needs to speak to the daemon:
   ad format as helia-ipfs-relay (`{type:'git', name, at, bundle, addrs?}`).
   Adversarial settings: always the `gnostr://cid/<CID>` form — name discovery
   is unauthenticated (newest ad wins).
+- **git remote helpers shipped here:** `src/git-remote-gnostr.js` and
+  `src/git-remote-ipfs.js` (bins via package.json; shared machinery in
+  `src/git-remote-helper.js`). Both reuse `src/node.js` — never fork the
+  libp2p stack into them. Helpers share no state with the daemon: own repo
+  at `~/.ipfs-agentd-git` (`IPFS_AGENTD_GIT_REPO`), fetch-only, and they
+  release the swarm (`stopNode`) before relaying to `git-upload-pack`.
+  `test/git-remote-e2e.mjs` covers both URL forms with real `git clone`.
 - **Pubsub across NAT:** two NAT'd nodes cannot see each other's topic
   messages without a mutually reachable rendezvous (a public relay subscriber
   or a shared helia-ipfs-relay `server.js` host). Relay reservations make
   nodes *dialable*; they do not bridge gossipsub meshes.
+- **Docker:** `Dockerfile` is all-in-one (web service is the default CMD;
+  override `command:` for daemon/chat). One container = one instance; repos
+  are per-instance volume mounts at `/data/repos`. `ARG BASE`/`RUN_USER`
+  exist for offline builds against internal base images. The compose file is
+  an example, not a requirement.
 
 ## Useful prompts
 
@@ -119,7 +141,8 @@ adjust topics/paths/CIDs:
   `git_publish_repo` (bundle → IPFS → pin → ad `{type:'git',name,at,bundle,addrs?}`).
 - "Fetch repo 'xyz' / bundle bafk… and save it for git" → `git_fetch_bundle`
   (`gnostr://cid/<CID>` or `gnostr://<name>`); then `git bundle verify` /
-  `git clone` locally, or `git clone gnostr://…` with `git-remote-gnostr`.
+  `git clone` locally, or `git clone gnostr://…` / `ipfs://<cid>` directly —
+  this repo ships both remote helpers as bins.
 - "Listen on topic X for the next 60s and summarize every message" →
   `ipfs_pubsub_pull` in a poll loop (subscribe-on-first-pull, bounded queue).
 - "Tell the humans on topic 'ops' that the build is green" →
