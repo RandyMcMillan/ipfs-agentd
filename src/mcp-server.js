@@ -79,6 +79,14 @@ def('ipfs_pubsub_pull', 'Pull queued pubsub messages for a topic (subscribe-on-f
 def('ipfs_name_publish', 'Publish a CID under a fresh one-shot IPNS key. Returns the IPNS name (PeerId).',
   { cid: z.string() }, tools.ipfsNamePublish)
 
+def('git_publish_repo', 'Publish a local git repo to IPFS + the gnostr topic: git bundle --all → CID → pin → announce {type:git,name,bundle}. Keep the daemon alive to seed. Returns clone hint (gnostr://cid/<CID>).',
+  { repoPath: z.string().describe('path to a git working copy'), name: z.string().describe('repo name announced on the topic (used by gnostr://<name> clones)'), topic: z.string().optional() },
+  tools.gitPublishRepo)
+
+def('git_fetch_bundle', 'Fetch a git bundle from IPFS: gnostr://cid/<CID> directly, or gnostr://<name> via topic discovery (newest ad wins, 30s default timeout). Saves the bundle to outPath; verify with git bundle verify.',
+  { source: z.string().describe('gnostr://cid/<CID> | gnostr://<name> | bare name'), outPath: z.string(), topic: z.string().optional(), timeoutMs: z.number().int().positive().optional() },
+  tools.gitFetchBundle)
+
 const transport = new StdioServerTransport()
 await server.connect(transport)
 log('MCP stdio transport connected — ready for tool calls')

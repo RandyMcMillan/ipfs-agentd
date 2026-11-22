@@ -20,9 +20,14 @@ function toB64 (u8) { return Buffer.from(u8).toString('base64') }
 function fromB64 (s) { return new Uint8Array(Buffer.from(s, 'base64')) }
 
 /* pins.add / pins.rm are ASYNC GENERATORS — they only execute when consumed.
- * drive them to completion with one shared drain. */
+ * drive them to completion with one shared drain. Re-pinning an already-pinned
+ * CID throws AlreadyPinnedError mid-stream; that state is the goal, so swallow it. */
 async function drainPin (gen) {
-  for await (const _ of gen) { /* exhaust */ }
+  try {
+    for await (const _ of gen) { /* exhaust */ }
+  } catch (err) {
+    if (!/already pinned/i.test(String(err?.message || err))) throw err
+  }
 }
 
 /* ---------------- identity / status ---------------- */
@@ -157,6 +162,121 @@ export async function ipfsPubsubPull (ctx, { topic = 'gnostr', max = 100 }) {
   const q = topicQueues.get(topic) ?? []
   const drained = q.splice(0, Math.min(max, q.length))
   return { topic, messages: drained, remaining: q.length, subscribed: true }
+}
+
+/* ---------------- git bridge (gnostr-compatible) ----------------
+ *
+ * Wire format shared with helia-ipfs-relay's gnostr tools:
+ *   { type:'git', name, at:<epoch ms>, bundle:<CID>, addrs?:[<multiaddr>] }
+ * Publishers: git_publish_repo here, gnostr-publish.js, the web app.
+ * Consumers:  git_fetch_bundle here, git-remote-gnostr.js.
+ */
+import { spawn } from 'node:child_process'
+import { mkdtempSync, readFileSync, writeFileSync, accessSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, basename, resolve as resolvePath } from 'node:path'
+
+function runGit (args) {
+  return new Promise((resolvePromise, reject) => {
+    const p = spawn('git', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    let err = ''
+    p.stderr.on('data', (d) => { err += d.toString() })
+    p.on('error', reject)
+    p.on('close', (code) => code === 0 ? resolvePromise() : reject(new Error('git ' + args[0] + ' exited ' + code + (err ? ': ' + err.trim() : ''))))
+  })
+}
+
+/* publish a local git repo on the gnostr topic: bundle --all → IPFS → pin → ad.
+ * KEEP THE DAEMON ALIVE after publishing — like gnostr-publish.js, this node is
+ * the bitswap seeder; stop it and the bundle is only fetchable if someone else
+ * pinned the CID. */
+export async function gitPublishRepo (ctx, { repoPath, name, topic = 'gnostr' }) {
+  const dir = resolvePath(repoPath)
+  await accessSync(join(dir, '.git'))   /* fail early with a clear message */
+  const tmp = mkdtempSync(join(tmpdir(), 'ipfs-agentd-bundle-'))
+  const bundlePath = join(tmp, 'repo.bundle')
+  try {
+    await runGit(['-C', dir, 'bundle', 'create', bundlePath, '--all'])
+    const bytes = readFileSync(bundlePath)
+    const cid = await ctx.ufs.addBytes(bytes)
+    await drainPin(ctx.helia.pins.add(parseCid(cid.toString())))
+    const ad = { type: 'git', name, at: Date.now(), bundle: cid.toString() }
+    const addrs = ctx.node.getMultiaddrs().map((a) => a.toString())
+    if (addrs.length > 0) ad.addrs = addrs
+    let published = true
+    let note = null
+    try {
+      await ctx.node.services.pubsub.publish(topic, new TextEncoder().encode(JSON.stringify(ad)))
+    } catch (err) {
+      /* gossipsub refuses to publish with no mesh peers — the bundle is still on
+       * IPFS and pinned; the ad can be republished once peers connect (gnostr-publish
+       * swallows this same error and relies on its next interval tick) */
+      published = false
+      note = 'ad not published: ' + (err?.message || err)
+    }
+    return { name, bundle: cid.toString(), size: bytes.length, topic, published, note, peers: ctx.node.getPeers().length, cloneHint: 'git clone gnostr://cid/' + cid.toString() }
+  } finally {
+    rmSyncSafe(tmp)
+  }
+}
+
+function rmSyncSafe (p) { try { rmSync(p, { recursive: true, force: true }) } catch { /* best effort */ } }
+
+/* fetch a git bundle: gnostr://cid/<CID> skips discovery; gnostr://<name> (or a
+ * bare name) listens on the topic for the newest matching ad — bundle ads win
+ * over url ads, mirroring git-remote-gnostr. url-only ads are rejected with a
+ * pointer to plain `git clone`, since the bundle bytes aren't on IPFS. */
+export async function gitFetchBundle (ctx, { source, outPath, topic = 'gnostr', timeoutMs = 30000 }) {
+  const src = source.replace(/^gnostr:\/\//, '')
+  let bundleCid = null
+  if (src.startsWith('cid/')) {
+    bundleCid = src.slice('cid/'.length)
+  } else {
+    bundleCid = await new Promise((resolvePromise, reject) => {
+      const wanted = src
+      let best = null
+      const timer = setTimeout(() => {
+        cleanup()
+        reject(new Error('no git ad for "' + wanted + '" on topic "' + topic + '" within ' + timeoutMs + 'ms'))
+      }, timeoutMs)
+      const onMessage = (evt) => {
+        if (evt.detail.topic !== topic) return
+        let ad
+        try { ad = JSON.parse(new TextDecoder().decode(evt.detail.data)) } catch { return }
+        if (ad.type !== 'git' || ad.name !== wanted) return
+        if (ad.bundle == null && ad.url == null) return
+        if (best == null || ad.at > best.at) best = ad
+        if (best.bundle != null) { cleanup(); resolvePromise(best.bundle) }   /* bundle preferred; don't wait out the clock */
+      }
+      const cleanup = () => {
+        clearTimeout(timer)
+        ctx.node.services.pubsub.removeEventListener('message', onMessage)
+        ctx.node.services.pubsub.unsubscribe(topic)
+      }
+      ctx.node.services.pubsub.subscribe(topic)
+      ctx.node.services.pubsub.addEventListener('message', onMessage)
+      /* ads already queued via ipfs_pubsub_pull count too — newest wins */
+      const queued = (topicQueues.get(topic) ?? []).map((m) => {
+        try { return JSON.parse(Buffer.from(m.dataBase64, 'base64').toString()) } catch { return null }
+      }).filter((a) => a?.type === 'git' && a.name === wanted)
+      const newest = queued.sort((a, b) => b.at - a.at)[0]
+      if (newest?.bundle != null) { cleanup(); resolvePromise(newest.bundle) }
+      else if (newest?.url != null) {
+        cleanup()
+        reject(new Error('newest ad for "' + wanted + '" is a url ad (' + newest.url + ') — clone it with plain git; no bundle on IPFS'))
+      }
+    })
+  }
+  /* fetch + save */
+  const chunks = []
+  for await (const chunk of ctx.ufs.cat(bundleCid)) chunks.push(chunk)
+  const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)))
+  if (buf.subarray(0, 16).toString() !== '# v2 git bundle\n') {
+    throw new Error('fetched ' + bundleCid + ' but it is not a git bundle (magic bytes mismatch)')
+  }
+  const dest = resolvePath(outPath)
+  writeFileSync(dest, buf)
+  return { bundle: bundleCid, outPath: dest, size: buf.length, verifyHint: 'git bundle verify ' + dest }
 }
 
 /* ---------------- IPNS publishing ---------------- */
