@@ -10,7 +10,9 @@
   "scripts": {
     "start": "node src/mcp-server.js",
     "smoke": "node test/smoke.mjs",
-    "test": "node test/smoke.mjs && node test/mcp-e2e.mjs && node test/persist.mjs"
+    "test": "node test/smoke.mjs && node test/mcp-e2e.mjs && node test/persist.mjs",
+    "interop:publisher": "node test/interop-publisher.mjs",
+    "interop:fetch": "node test/interop-fetch.mjs"
   },
   "engines": {
     "node": ">=22"
