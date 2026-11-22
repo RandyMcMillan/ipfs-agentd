@@ -87,3 +87,8 @@ alive; stop it and the bundle is only fetchable if someone else pinned the CID.
   model this project chose. Revisit only if a hosted bridge variant is ever wanted.
 - Phase 3 (done): git bridge — `git_publish_repo` / `git_fetch_bundle`, gnostr-wire-compatible.
 - Future: remote-pinning backup for durability; named IPNS key reuse; dual-role relay.
+
+## CI
+
+- **ci.yml** — `npm ci` + full `npm test` on every push/PR (Node 22).
+- **interop.yml** — live interop on pushes to `feat/**` (or manual dispatch, `live_seconds` input): a publisher daemon seeds the repo bundle for the live window and re-announces it on the real `gnostr` topic every 15s; an independent second node fetches by CID (bitswap) and by name (topic discovery); the real `git-remote-gnostr` helper from helia-ipfs-relay clones `gnostr://cid/<CID>` with plain git. Locally reproducible via `npm run interop:publisher` / `npm run interop:fetch` (see file headers).
