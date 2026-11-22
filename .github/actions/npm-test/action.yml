@@ -1,16 +1,19 @@
 name: npm-test
 description: >-
-  Reusable test gate: checkout, set up Node 22 (npm cache), npm ci, run the
-  full test suite (smoke + MCP e2e + persist + chat e2e + git-remote e2e +
-  web e2e). Shared by ci.yml and release.yml — update in one place.
+  Reusable test gate: checkout, install nvm + the exact Node from .nvmrc
+  (npm cache), npm ci, run the full test suite (smoke + MCP e2e + persist +
+  chat e2e + git-remote e2e + web e2e). Shared by ci.yml and release.yml —
+  update in one place.
 runs:
   using: composite
   steps:
     - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: ./.github/actions/install-nvm
+    - uses: actions/cache@v4
       with:
-        node-version: 22
-        cache: npm
+        path: ~/.npm
+        key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+        restore-keys: npm-${{ runner.os }}-
     - name: npm ci (retry — registry/GitHub flakes)
       run: |
         for i in 1 2 3 4 5; do
