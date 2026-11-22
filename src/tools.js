@@ -35,7 +35,7 @@ async function drainPin (gen) {
 export async function ipfsId (ctx) {
   return {
     peerId: ctx.node.peerId.toString(),
-    agent: 'ipfs-agentd/0.3.1',
+    agent: 'ipfs-agentd/0.3.2',
     listenAddrs: ctx.node.getMultiaddrs().map((a) => a.toString()),
     connections: ctx.node.getConnections().length,
     peers: ctx.node.getPeers().length,
