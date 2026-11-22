@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: ['**']
+    tags-ignore: ['v*']        # tags gate on release.yml instead
   pull_request:
 
 jobs:
@@ -10,10 +11,4 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - run: npm test
+      - uses: ./.github/actions/npm-test
