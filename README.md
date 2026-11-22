@@ -26,10 +26,37 @@ node. Nothing leaves the machine implicitly.
 
 ```sh
 npm install
-node src/mcp-server.js              # stdio MCP server, repo at ~/.ipfs-agentd
+ipfs-agentd                         # stdio MCP server, repo at ~/.ipfs-agentd (bin: src/bin.js)
 node src/mcp-server.js --repo /path # custom repo dir
 node test/smoke.mjs                 # in-process test of every tool
 ```
+
+Logging is leveled: `--logging debug|info|warn|error|silent` (`--quiet` = `silent`).
+Tool calls log at `debug`; lifecycle/peer events at `info`.
+
+## Chat CLI
+
+```sh
+ipfs-agentd chat                          # join topic "gnostr" as $USER
+ipfs-agentd chat --topic mymesh --name alice --repo /tmp/alice --logging info
+```
+
+Humans type lines; agents join the same topic through the
+`ipfs_pubsub_publish` / `ipfs_pubsub_pull` MCP tools. The shared envelope
+(UTF-8 JSON on the gossipsub topic) is:
+
+```json
+{ "type": "chat", "name": "<display name>", "text": "<message>", "at": <epoch ms> }
+```
+
+Anything on the topic that is not a chat envelope is rendered as
+`RAW <base64>` so binary/agent protocols stay visible to humans. The CLI
+prints its dialable `listen:` / `listen(relayed):` lines after the ready
+banner — agents/scripts dial those to attach. Ctrl-C leaves the topic.
+
+Reachability note: gossipsub needs a connected mesh. Two NAT'd peers that
+never dial each other do not exchange messages — dial the advertised
+addresses (or share a reachable rendezvous) first.
 
 ## Tools
 
@@ -78,6 +105,12 @@ alive; stop it and the bundle is only fetchable if someone else pinned the CID.
 - `ipfs_name_publish` is one-shot (fresh key each call, key not persisted yet). Named key reuse is
   future work.
 - Pubsub message queues are bounded (1000/topic); an agent that never pulls drops old messages.
+- Relayed dialing works (relay v2 reservations + `/p2p-circuit` addresses + dcutr hole
+  punching are enabled by default), but **bitswap fetch over a relayed connection fails**
+  in this Helia 7 / js-libp2p 3.x stack ("Failed to load block" over a stable relayed
+  session, then `NO_RESERVATION` on re-dial). Direct-dial fetch works. Do not rely on
+  fetching content through relays; use pubsub for discovery, then dial directly or
+  deploy a publicly reachable seeder.
 
 ## Roadmap
 
@@ -86,9 +119,14 @@ alive; stop it and the bundle is only fetchable if someone else pinned the CID.
   `command` is rejected by validation. That contradicts the local-daemon-per-agent
   model this project chose. Revisit only if a hosted bridge variant is ever wanted.
 - Phase 3 (done): git bridge — `git_publish_repo` / `git_fetch_bundle`, gnostr-wire-compatible.
+- Phase 4 (done): `ipfs-agentd` CLI binary — gossipsub topic chat (human ↔ agent ↔
+  agent, shared `{type:'chat',name,text,at}` envelope) + `--logging` level flag.
+  Verified: `git clone gnostr://cid/<CID>` and `gnostr://<name>` both work
+  through helia-ipfs-relay's real `git-remote-gnostr` helper (fsck-clean).
 - Future: remote-pinning backup for durability; named IPNS key reuse; dual-role relay.
 
 ## CI
 
-- **ci.yml** — `npm ci` + full `npm test` on every push/PR (Node 22).
+- **ci.yml** — `npm ci` + full `npm test` (smoke, MCP e2e, persist, chat e2e) on
+  every push/PR (Node 22). Locally: `act -j test -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-22.04`.
 - **interop.yml** — live interop on pushes to `feat/**` (or manual dispatch, `live_seconds` input): a publisher daemon seeds the repo bundle for the live window and re-announces it on the real `gnostr` topic every 15s; an independent second node fetches by CID (bitswap) and by name (topic discovery); the real `git-remote-gnostr` helper from helia-ipfs-relay clones `gnostr://cid/<CID>` with plain git. Locally reproducible via `npm run interop:publisher` / `npm run interop:fetch` (see file headers).

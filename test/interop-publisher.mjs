@@ -25,14 +25,29 @@ mkdirSync(outDir, { recursive: true })
 const log = (m) => process.stderr.write('publisher: ' + m + '\n')
 
 const ctx = await createAgentNode({ repoPath: join(outDir, 'publisher-store'), log })
+
+/* if we have no public listener, wait for a relay reservation so external peers
+ * can actually dial us — readiness (and the notice below) must not race it */
+if (!process.env.GNOSTR_LISTEN) {
+  const deadline = Date.now() + 90000
+  while (Date.now() < deadline) {
+    if (ctx.node.getMultiaddrs().some((a) => a.toString().includes('/p2p-circuit/'))) break
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+  const circuitAddrs = ctx.node.getMultiaddrs().filter((a) => a.toString().includes('/p2p-circuit/'))
+  log('relay addrs: ' + (circuitAddrs.length ? circuitAddrs.map((a) => a.toString()).join(' ') : 'NONE — publishing anyway'))
+}
+
 const res = await tools.gitPublishRepo(ctx, { repoPath: gitRepo, name, topic })
 if (!res.published) log('initial ad not published: ' + res.note)
 
 const peer = ctx.node.peerId.toString()
+const allAddrs = ctx.node.getMultiaddrs().map((a) => a.toString())
 writeFileSync(join(outDir, 'cid'), res.bundle)
 writeFileSync(join(outDir, 'peer'), peer)
 writeFileSync(join(outDir, 'name'), name)
-console.log(`::notice::interop name=${name} bundle=${res.bundle} peer=${peer}`)
+writeFileSync(join(outDir, 'addrs'), allAddrs.join(','))
+console.log(`::notice::interop name=${name} bundle=${res.bundle} peer=${peer} addrs=${allAddrs.join(',')}`)
 log(`name=${name} bundle=${res.bundle} peer=${peer}`)
 
 /* re-announce so fetchers that start later still catch the ad on the live topic */
