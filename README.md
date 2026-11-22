@@ -45,6 +45,21 @@ node test/smoke.mjs                 # in-process test of every tool
 | `ipfs_pubsub_publish` | gossipsub publish (default topic `gnostr`) |
 | `ipfs_pubsub_pull` | Poll queued messages for a topic (subscribe-on-first-pull, bounded queue) |
 | `ipfs_name_publish` | Publish CID under a one-shot IPNS key (name = key PeerId) |
+| `git_publish_repo` | `git bundle --all` → IPFS → pin → announce on gnostr topic (wire-compatible with `git-remote-gnostr`) |
+| `git_fetch_bundle` | Fetch a bundle: `gnostr://cid/<CID>` directly or `gnostr://<name>` via topic discovery; saves to disk for `git bundle verify`/`clone` |
+
+## Git bridge
+
+`git_publish_repo` / `git_fetch_bundle` speak the same ad format as
+[helia-ipfs-relay](https://github.com/RandyMcMillan/helia-ipfs-relay)'s gnostr tools
+(`{type:'git', name, at, bundle, addrs?}`): an agent-published repo is clonable by anyone
+running `git-remote-gnostr` (`git clone gnostr://<name>`), and vice versa. Name discovery
+is unauthenticated (newest ad wins) — in adversarial settings use `gnostr://cid/<CID>`,
+which is content-addressed.
+
+Caveats: publishing with zero pubsub peers returns `published:false` (bundle is still on
+IPFS and pinned — republish when peers connect). The daemon is the bitswap seeder while
+alive; stop it and the bundle is only fetchable if someone else pinned the CID.
 
 ## Env
 
@@ -66,6 +81,9 @@ node test/smoke.mjs                 # in-process test of every tool
 
 ## Roadmap
 
-- Phase 2: Kimi plugin bundle wrapping this daemon (MCP tools as shipped).
-- Phase 3: git bridge — agent-driven `gnostr-publish`/`git-remote-gnostr` workflows; optional
-  remote-pinning backup for durability.
+- Phase 2 (skipped for now): Kimi plugin bundle. **Blocked by design**: Kimi custom
+  plugins are hosted-only and require a remote OAuth-authorized MCP endpoint — a stdio
+  `command` is rejected by validation. That contradicts the local-daemon-per-agent
+  model this project chose. Revisit only if a hosted bridge variant is ever wanted.
+- Phase 3 (done): git bridge — `git_publish_repo` / `git_fetch_bundle`, gnostr-wire-compatible.
+- Future: remote-pinning backup for durability; named IPNS key reuse; dual-role relay.
