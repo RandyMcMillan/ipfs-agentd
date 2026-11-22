@@ -1,0 +1,22 @@
+name: install-nvm
+description: >-
+  Install nvm and the exact Node version pinned in .nvmrc — the same toolchain
+  local dev uses (nvm). Single source of truth for the Node version across
+  ci.yml, release.yml and interop.yml; replaces actions/setup-node so every
+  gate runs what developers run.
+runs:
+  using: composite
+  steps:
+    - name: Install nvm v0.41.0
+      shell: bash
+      run: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh | bash
+
+    - name: Install Node from .nvmrc via nvm
+      shell: bash
+      run: |
+        export NVM_DIR="$HOME/.nvm"
+        . "$NVM_DIR/nvm.sh"
+        nvm install                 # exact version pinned in .nvmrc
+        nvm alias default "$(nvm current)"
+        dirname "$(nvm which current)" >> "$GITHUB_PATH"
+        echo "node $(node --version) / npm $(npm --version) (nvm $(nvm --version))"
