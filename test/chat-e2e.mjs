@@ -12,7 +12,6 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { multiaddr } from '@multiformats/multiaddr'
 import { createAgentNode } from '../src/node.js'
 import * as tools from '../src/tools.js'
 import { createLogger, LEVELS } from '../src/logger.js'
@@ -42,22 +41,24 @@ human.stdout.on('data', (d) => { humanOut += d.toString() })
 let humanErr = ''
 human.stderr.on('data', (d) => { humanErr += d.toString() })
 
-/* the agent side */
-const ctx = await createAgentNode({ repoPath: agentRepo })
+/* the agent side — created AFTER the CLI announces, so it can bootstrap
+ * against the human's advertised address. Bootstrapping (not a one-shot
+ * dial) matters: the re-bootstrap sweep then self-heals the connection if
+ * transient churn prunes it mid-test */
+let ctx = null
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64')
 
 try {
   await new Promise((r) => setTimeout(r, 9000))   /* chat ready + mesh settle */
   check('chat CLI announced ready', humanOut.includes('chat ready'), humanOut.split('\n')[0]?.slice(0, 80))
 
-  /* agent dials the human's advertised addresses (same-host LAN addrs) */
   const listen = [...humanOut.matchAll(/^listen: (\S+)$/gm)].map((m) => m[1])
   check('chat CLI advertised listen addrs', listen.length > 0, listen.slice(0, 2).join(' ').slice(0, 80))
-  for (const addr of listen) {
-    try { await ctx.node.dial(multiaddr(addr)) } catch { /* try next */ }
-  }
+  process.env.GNOSTR_BOOTSTRAP = listen.join(',')
+  process.env.REBOOTSTRAP_SECS = '5'
+  ctx = await createAgentNode({ repoPath: agentRepo })
   tools.ipfsPubsubPull(ctx, { topic, max: 1 })   /* subscribe the agent BEFORE any traffic */
-  await new Promise((r) => setTimeout(r, 5000))   /* gossipsub mesh join after dial */
+  await new Promise((r) => setTimeout(r, 8000))   /* bootstrap dial + gossipsub mesh join */
 
   /* human -> agent */
   human.stdin.write('hello agents\n')
@@ -91,7 +92,7 @@ try {
   check('--logging error kept stderr quiet', humanErr.trim() === '', humanErr.trim().slice(0, 80))
 } finally {
   human.kill('SIGTERM')
-  await ctx.helia.stop()
+  if (ctx) await ctx.helia.stop()
   rmSync(chatRepo, { recursive: true, force: true })
   rmSync(agentRepo, { recursive: true, force: true })
 }

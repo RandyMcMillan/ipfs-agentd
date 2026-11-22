@@ -157,6 +157,7 @@ URLs rendered).
 | `IPFS_AGENTD_REPO` | `~/.ipfs-agentd` | Blockstore/datastore directory |
 | `GNOSTR_BOOTSTRAP` | — | Extra comma-separated multiaddrs to dial at boot |
 | `GNOSTR_LISTEN` | — | Listen multiaddrs when running on a public host |
+| `REBOOTSTRAP_SECS` | `60` | Re-dial unconnected bootstrap peers every N s (0 disables) |
 
 ## Notes / limits
 

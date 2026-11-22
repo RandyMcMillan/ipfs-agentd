@@ -19,6 +19,7 @@ import { FsDatastore } from 'datastore-fs'
 import { unixfs } from '@helia/unixfs'
 import { ipns } from '@helia/ipns'
 import { helia as ipnsHelia, pubsub as ipnsPubsub } from '@helia/ipns/routing'
+import { multiaddr } from '@multiformats/multiaddr'
 import { tcp } from '@libp2p/tcp'
 import { webSockets } from '@libp2p/websockets'
 import { noise } from '@libp2p/noise'
@@ -97,6 +98,24 @@ export async function createAgentNode ({ repoPath = DEFAULT_REPO, log = () => {}
     const conn = e.detail
     if (conn.remoteAddr.toString().includes('/p2p-circuit/')) log('connection:close (relayed) ' + conn.remotePeer.toString())
   })
+
+  /* periodic re-bootstrap: @libp2p/bootstrap dials once at startup, so a node
+   * that boots on a flaky network (or wakes before its NAT/relay is ready)
+   * stays partitioned until restart. Every RESECS, re-dial any bootstrap peer
+   * we are not currently connected to. Unref'd — never holds the process open. */
+  const REBOOTSTRAP_SECS = Number(process.env.REBOOTSTRAP_SECS || 60)
+  if (REBOOTSTRAP_SECS > 0) {
+    const rebootstrap = setInterval(() => {
+      const connected = new Set(node.getPeers().map(p => p.toString()))
+      for (const a of BOOTSTRAP_LIST) {
+        const m = a.match(/\/p2p\/([^/]+)$/)
+        if (m && connected.has(m[1])) continue
+        node.dial(multiaddr(a)).catch(() => {})   /* already dialing / unreachable — fine */
+      }
+      log('re-bootstrap sweep: ' + connected.size + ' connected')
+    }, REBOOTSTRAP_SECS * 1000)
+    rebootstrap.unref()
+  }
 
   /* IPNS: helia routing (DHT, client mode) + pubsub router, which works even client-side */
   const namesys = ipns(helia, { routers: [ipnsHelia(helia), ipnsPubsub(helia)] })
