@@ -1,0 +1,42 @@
+{
+  "name": "ipfs-agentd",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Persistent local IPFS daemon for AI agents \u2014 headless Helia node (disk blockstore) with an MCP stdio interface: add, cat, pin, resolve, gnostr pubsub",
+  "bin": {
+    "ipfs-agentd": "src/mcp-server.js"
+  },
+  "scripts": {
+    "start": "node src/mcp-server.js",
+    "smoke": "node test/smoke.mjs",
+    "test": "node test/smoke.mjs && node test/mcp-e2e.mjs && node test/persist.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@helia/ipns": "^8.0.0",
+    "@helia/unixfs": "8.0.9",
+    "@ipld/car": "^5.4.9",
+    "@libp2p/bootstrap": "12.0.36",
+    "@libp2p/circuit-relay-v2": "4.2.17",
+    "@libp2p/gossipsub": "15.0.23",
+    "@libp2p/identify": "4.1.18",
+    "@libp2p/kad-dht": "16.4.9",
+    "@libp2p/noise": "17.0.7",
+    "@libp2p/ping": "3.1.17",
+    "@libp2p/tcp": "11.0.32",
+    "@libp2p/websockets": "10.1.25",
+    "@libp2p/yamux": "8.0.7",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@multiformats/multiaddr": "13.0.3",
+    "blockstore-fs": "^4.0.1",
+    "datastore-fs": "^12.0.1",
+    "helia": "7.1.16",
+    "libp2p": "3.5.1",
+    "multiformats": "^13.3.1",
+    "@libp2p/peer-id": "^5.1.9",
+    "zod": "^4.6.7"
+  }
+}
