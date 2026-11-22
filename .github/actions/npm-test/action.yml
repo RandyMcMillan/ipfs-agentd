@@ -11,7 +11,14 @@ runs:
       with:
         node-version: 22
         cache: npm
-    - run: npm ci --no-audit --no-fund
+    - name: npm ci (retry — registry/GitHub flakes)
+      run: |
+        for i in 1 2 3 4 5; do
+          npm ci --no-audit --no-fund && exit 0
+          echo "::warning::npm ci attempt $i failed — retrying in $((i*10))s"
+          sleep $((i*10))
+        done
+        exit 1
       shell: bash
     - run: npm test
       shell: bash
