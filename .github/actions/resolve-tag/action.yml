@@ -1,0 +1,19 @@
+name: resolve-tag
+description: >-
+  Resolve the tag a release should publish: the workflow_dispatch input when
+  given, otherwise the pushed ref (expected to be a v* tag).
+inputs:
+  tag:
+    description: 'Tag to release (workflow_dispatch only)'
+    required: false
+    default: ''
+outputs:
+  tag:
+    description: 'Resolved tag name'
+    value: ${{ steps.resolve.outputs.tag }}
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+      shell: bash
