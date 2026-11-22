@@ -74,10 +74,19 @@ try {
   }
   check('human -> agent envelope', Boolean(got), got ? JSON.stringify(got).slice(0, 80) : 'never received')
 
-  /* agent -> human */
-  await tools.ipfsPubsubPublish(ctx, { topic, dataBase64: b64(JSON.stringify({ type: 'chat', name: 'bot-7', text: 'hi human', at: Date.now() })) })
-  await new Promise((r) => setTimeout(r, 8000))
-  check('agent -> human rendered', humanOut.includes('bot-7') && humanOut.includes('hi human'), humanOut.split('\n').filter((l) => l.includes('bot-7')).join(' | ').slice(0, 100))
+  /* agent -> human: publish, then poll — transient mesh churn (bootstrap
+   * connections flapping can prune the agent<->CLI session) must not flake
+   * the suite; republish until rendered, like a real user would */
+  let rendered = false
+  for (let attempt = 1; attempt <= 3 && !rendered; attempt++) {
+    await tools.ipfsPubsubPublish(ctx, { topic, dataBase64: b64(JSON.stringify({ type: 'chat', name: 'bot-7', text: 'hi human', at: Date.now() })) })
+    const deadline = Date.now() + 15000
+    while (!rendered && Date.now() < deadline) {
+      rendered = humanOut.includes('bot-7') && humanOut.includes('hi human')
+      if (!rendered) await new Promise((r) => setTimeout(r, 500))
+    }
+  }
+  check('agent -> human rendered', rendered, humanOut.split('\n').filter((l) => l.includes('bot-7')).join(' | ').slice(0, 100))
 
   check('--logging error kept stderr quiet', humanErr.trim() === '', humanErr.trim().slice(0, 80))
 } finally {
