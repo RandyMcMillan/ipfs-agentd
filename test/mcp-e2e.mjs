@@ -56,7 +56,7 @@ try {
 
   const tools = await rpc('tools/list')
   const names = (tools.result?.tools ?? []).map((t) => t.name)
-  check('tools/list (12 tools)', names.length === 12, names.join(','))
+  check('tools/list (14 tools)', names.length === 14, names.join(','))
 
   const payload = Buffer.from('hello over MCP').toString('base64')
   const added = await rpc('tools/call', { name: 'ipfs_add', arguments: { contentBase64: payload } })

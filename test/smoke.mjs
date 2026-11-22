@@ -2,6 +2,7 @@
  * Run: node test/smoke.mjs   (uses a temp repo; does not touch ~/.ipfs-agentd)
  */
 import { mkdtempSync, rmSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAgentNode } from '../src/node.js'
@@ -76,6 +77,32 @@ await check('ipfs_pubsub loopback', async () => {
   return { messages: got.messages.length }
 })
 await check('ipfs_id', () => tools.ipfsId(ctx))
+
+/* git bridge — publish THIS repo as a bundle, fetch it back by CID, verify */
+const selfRepo = (await import('node:path')).join((await import('node:url')).fileURLToPath(new URL('..', import.meta.url)))
+await check('git_publish_repo (self)', async () => {
+  const r = await tools.gitPublishRepo(ctx, { repoPath: selfRepo, name: 'smoke-self', topic: 'smoke-git' })
+  if (!r.bundle.startsWith('bafk')) throw new Error('bundle is not a raw CID: ' + r.bundle)
+  return { bundle: r.bundle, size: r.size }
+}, )
+let fetchedPath = null
+await check('git_fetch_bundle (by cid)', async () => {
+  /* re-publish to get the CID deterministically into this closure scope */
+  const pub = await tools.gitPublishRepo(ctx, { repoPath: selfRepo, name: 'smoke-fetch', topic: 'smoke-git' })
+  fetchedPath = join(repo, 'fetched.bundle')
+  const r = await tools.gitFetchBundle(ctx, { source: 'gnostr://cid/' + pub.bundle, outPath: fetchedPath, topic: 'smoke-git' })
+  if (r.size !== pub.size) throw new Error('size mismatch: ' + r.size + ' vs ' + pub.size)
+  return { size: r.size }
+})
+await check('git bundle verify', async () => {
+  await new Promise((res, rej) => {
+    const p = spawn('git', ['bundle', 'verify', fetchedPath], { stdio: ['ignore', 'ignore', 'pipe'] })
+    let err = ''
+    p.stderr.on('data', (d) => { err += d })
+    p.on('close', (code) => code === 0 ? res() : rej(new Error('git bundle verify exited ' + code + ': ' + err)))
+  })
+  return { ok: true }
+})
 
 step('stopping…')
 await ctx.helia.stop()
