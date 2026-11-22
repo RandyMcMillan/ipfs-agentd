@@ -1,34 +1,82 @@
 name: interop
 
-# Live interop: one runner hosts two independent ipfs-agentd nodes plus the real
-# git-remote-gnostr CLI helper from helia-ipfs-relay.
+# Live interop, dispatch-only with per-OS select (default linux):
+# each selected runner hosts two independent ipfs-agentd nodes plus the real
+# git-remote-gnostr CLI helper; the linux leg additionally builds the Docker
+# image and joins the container itself as an independent peer.
 #   1. publisher daemon seeds a git bundle for INTEROP_LIVE_SECS and re-announces
 #      it on the real "gnostr" topic every 15s (externally observable)
 #   2. a second, independent node fetches the bundle by CID (bitswap, direct dial)
 #      and by name (topic discovery)
 #   3. the real git-remote-gnostr helper clones gnostr://cid/<CID> with plain git
+#   4. linux only: a Docker container runs the fetcher and the helper clone
 # The job then waits out the live window so external peers can confirm the ad.
 
 on:
-  push:
-    branches: ['feat/**']
   workflow_dispatch:
     inputs:
       live_seconds:
         description: 'How long the publisher keeps seeding (seconds)'
         default: '900'
+      linux:
+        description: 'Run on ubuntu-latest (includes Docker peer leg)'
+        type: boolean
+        default: true
+      windows:
+        description: 'Run on windows-latest'
+        type: boolean
+        default: false
+      macos:
+        description: 'Run on macos-latest'
+        type: boolean
+        default: false
 
 env:
   INTEROP_LIVE_SECS: ${{ github.event.inputs.live_seconds || '900' }}
 
 jobs:
-  live-interop:
+  # build the runner matrix from the per-OS selects; empty → whole workflow skips
+  matrix:
     runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.set.outputs.include }}
+    steps:
+      - id: set
+        run: |
+          include='[]'
+          if [ "${{ inputs.linux }}"   = "true" ]; then include=$(echo "$include" | jq '. + [{"os":"ubuntu-latest",  "docker":true}]');  fi
+          if [ "${{ inputs.windows }}" = "true" ]; then include=$(echo "$include" | jq '. + [{"os":"windows-latest", "docker":false}]'); fi
+          if [ "${{ inputs.macos }}"   = "true" ]; then include=$(echo "$include" | jq '. + [{"os":"macos-latest",   "docker":false}]'); fi
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+          echo "matrix: $include"
+
+  live-interop:
+    needs: matrix
+    if: needs.matrix.outputs.include != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.include) }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/install-nvm
+
+      - name: Node (unix — nvm per .nvmrc)
+        if: runner.os != 'Windows'
+        uses: ./.github/actions/install-nvm
+      - name: Node (windows)
+        if: runner.os == 'Windows'
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
       - uses: actions/cache@v4
+        if: runner.os != 'Windows'
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -40,7 +88,7 @@ jobs:
           mkdir -p /tmp/interop
           GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4011 \
           INTEROP_REPO=$GITHUB_WORKSPACE \
-          INTEROP_NAME=ipfs-agentd-ci-${{ github.run_id }} \
+          INTEROP_NAME=ipfs-agentd-ci-${{ github.run_id }}-${{ matrix.os }} \
           node test/interop-publisher.mjs 2>/tmp/interop/publisher.log &
           echo $! > /tmp/interop-pub.pid
           echo "publisher pid $(cat /tmp/interop-pub.pid), live window ${{ env.INTEROP_LIVE_SECS }}s"
@@ -80,6 +128,40 @@ jobs:
           test -f /tmp/interop-clone/src/mcp-server.js
           echo 'cloned tree head:'
           git -C /tmp/interop-clone log --oneline | head -5
+
+      - name: Docker peer — build image
+        if: matrix.docker
+        timeout-minutes: 15
+        run: docker build -t ipfs-agentd:interop .
+
+      - name: Docker peer — container fetcher (independent node in-container)
+        if: matrix.docker
+        timeout-minutes: 8
+        run: |
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE:/work" -w /work \
+            -v /tmp/interop:/tmp/interop \
+            -e GNOSTR_BOOTSTRAP=/ip4/127.0.0.1/tcp/4011/p2p/$PEER \
+            -e INTEROP_OUT=/tmp/interop \
+            ipfs-agentd:interop node test/interop-fetch.mjs
+
+      - name: Docker peer — container clone via in-repo git-remote-gnostr
+        if: matrix.docker
+        timeout-minutes: 8
+        run: |
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE:/work" -w /work \
+            ipfs-agentd:interop sh -c '
+              mkdir -p /tmp/bin
+              printf "#!/bin/sh\nexec node /work/src/git-remote-gnostr.js \"\$@\"\n" > /tmp/bin/git-remote-gnostr
+              chmod +x /tmp/bin/git-remote-gnostr
+              export PATH=/tmp/bin:$PATH
+              git config --global protocol.gnostr.allow always
+              rm -rf /tmp/clone
+              GNOSTR_BOOTSTRAP="/ip4/127.0.0.1/tcp/4011/p2p/'"$PEER"'" git clone "gnostr://cid/'"$CID"'" /tmp/clone
+              git -C /tmp/clone log --oneline -2
+              git -C /tmp/clone fsck --strict
+            '
 
       - name: Live window — publisher keeps seeding (external confirmation open)
         timeout-minutes: 25
