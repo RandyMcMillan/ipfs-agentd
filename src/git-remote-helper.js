@@ -77,16 +77,26 @@ export async function materializeBundle (ctx, tag, cidStr) {
 }
 
 /* bitswap wants must not race ahead of the bootstrap dials — wait until we
- * have at least one connection before subscribing or fetching */
+ * have at least one connection before subscribing or fetching. Flaky-network
+ * resilience: retry the whole wait a few times; re-bootstrap sweeps also
+ * keep dialing in the background (see node.js) */
 export async function waitForPeers (ctx, tag, min = 1, timeoutMs = 20000) {
-  if (ctx.node.getPeers().length >= min) return
-  log(tag, 'dialing bootstrap peers…')
-  await new Promise((resolve, reject) => {
-    const cleanup = () => { clearTimeout(t); ctx.node.removeEventListener('peer:connect', onConnect) }
-    const t = setTimeout(() => { cleanup(); reject(new Error('timed out waiting for peers')) }, timeoutMs)
-    const onConnect = () => { if (ctx.node.getPeers().length >= min) { cleanup(); resolve() } }
-    ctx.node.addEventListener('peer:connect', onConnect)
-  })
+  for (let attempt = 1; ; attempt++) {
+    if (ctx.node.getPeers().length >= min) return
+    log(tag, `dialing bootstrap peers… (attempt ${attempt})`)
+    try {
+      await new Promise((resolve, reject) => {
+        const cleanup = () => { clearTimeout(t); ctx.node.removeEventListener('peer:connect', onConnect) }
+        const t = setTimeout(() => { cleanup(); reject(new Error('timed out waiting for peers')) }, timeoutMs)
+        const onConnect = () => { if (ctx.node.getPeers().length >= min) { cleanup(); resolve() } }
+        ctx.node.addEventListener('peer:connect', onConnect)
+      })
+      return
+    } catch (err) {
+      if (attempt >= 3) throw err
+      log(tag, err.message + ' — retrying')
+    }
+  }
 }
 
 /* Serve the remote-helper protocol until git says "connect git-upload-pack",

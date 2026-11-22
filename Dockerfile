@@ -22,7 +22,12 @@ ENV NODE_ENV=production \
     REPOS=/data/repos
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --no-audit --no-fund
+# registry flake resilience: bounded retry with backoff, then fail the build
+RUN for i in 1 2 3 4 5; do \
+      npm ci --omit=dev --no-audit --no-fund && break; \
+      echo "npm ci attempt $i failed — retrying in $((i*5))s" >&2; sleep $((i*5)); \
+      [ "$i" = 5 ] && exit 1; \
+    done
 COPY src ./src
 
 # non-root runtime; repos arrive as volume mounts. Override RUN_USER=root for

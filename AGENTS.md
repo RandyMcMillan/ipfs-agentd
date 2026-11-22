@@ -34,6 +34,7 @@ npm test                            # smoke + MCP e2e + persist + chat e2e
 | `IPFS_AGENTD_REPO` | `~/.ipfs-agentd` | Blockstore/datastore dir |
 | `GNOSTR_LISTEN` | — | Extra listen multiaddrs (public hosts) |
 | `GNOSTR_BOOTSTRAP` | — | Extra peers to dial at boot (e.g. a publisher's addr) |
+| `REBOOTSTRAP_SECS` | `60` | Re-dial unconnected bootstrap peers every N s (0 = off) |
 
 ### Reachability model
 
@@ -167,7 +168,14 @@ adjust topics/paths/CIDs:
 
 Workflows:
 
-- `ci.yml` — `npm ci` + `npm test` on every push/PR (Node 22).
+- `ci.yml` — reusable `./.github/actions/npm-test` on every push/PR (Node 22).
+  Ignores `v*` tags — release.yml owns the tag gate.
+- `docker.yml` — owns ALL image pushes to GHCR: `latest`+`:<sha>` on master,
+  `:<tag>`+`latest` on `v*`, build-only on PRs (docker/metadata-action for
+  tagging). release.yml does not push images.
+- `release.yml` — tag trigger (`v*`): test gate via the npm-test action, then
+  a GitHub release (softprops/action-gh-release). `resolve-tag` composite
+  resolves the dispatch input vs ref.
 - `interop.yml` — live interop on `feat/**` pushes and manual dispatch
   (`live_seconds` input): publisher seeds for the live window, an independent
   node fetches by CID and by name, the real `git-remote-gnostr` helper clones
@@ -178,12 +186,15 @@ act binary at `/mnt/agents/opt/act`, runner image
 `ghcr.io/catthehacker/ubuntu:act-22.04` — Docker Hub is unreachable here):
 
 ```sh
-act -j test -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-22.04
+# clean build, always — no -r (stale containers mask failures)
+act -j test -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-22.04 --bind -vv
 act workflow_dispatch -W .github/workflows/interop.yml -e /tmp/act-event.json \
-  -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-22.04
-# flags: -r reuse the container (kills nothing for you — pkill stale
-#        ipfs-agentd daemons first), --bind live-mount the repo, -vv debug logs
+  -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-22.04 --bind -vv
 ```
+
+Known sandbox flake: act fetching actions from github.com (`info/refs: EOF`)
+fails intermittently — re-run; the repo-side retry loops (npm ci in the
+action + Dockerfile) only cover registry fetches, not action clones.
 
 `gh` CLI: authenticate with `gh auth login` (token) for private endpoints.
 For this public repo, the REST API works unauthenticated and is enough to poll
