@@ -82,6 +82,10 @@ on:
         description: 'Model beam: verbose agent chat — opencode streams --thinking + --print-logs; full transcripts land in the step summary'
         type: boolean
         default: false
+      bump_on_pass:
+        description: 'Model beam: if any leg gets a WITNESS PASS, bump the patch version on master (unsigned bot commit — tags stay manual/signed)'
+        type: boolean
+        default: true
 
 env:
   INTEROP_LIVE_SECS: ${{ github.event.inputs.live_seconds || '900' }}
@@ -473,6 +477,7 @@ jobs:
           path: ${{ runner.temp }}/chat-addrs
 
       - name: Copilot must figure out the gnostr chat AND get a real answer
+        id: agent
         if: steps.preflight.outputs.callable == 'true'
         timeout-minutes: 12
         continue-on-error: true   # PoC: orange on failure, never red
@@ -535,7 +540,10 @@ jobs:
             if grep -q "WITNESS FAIL" "$RUNNER_TEMP/witness.out" 2>/dev/null; then VERDICT=fail; break; fi
             sleep 4
           done
+          # machine-readable outcome for the beam-promote job (artifact below)
+          if [ "$VERDICT" = "pass" ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
           if [ "$VERDICT" = "pass" ]; then
+            echo copilot > "$RUNNER_TEMP/beam-pass"
             echo "::notice::COPILOT CHAT INTEROP PASS — copilot's question got a real answer from another instance"
             echo "### Copilot chat interop — PASS" >> "$GITHUB_STEP_SUMMARY"
             echo "The witness received Copilot's question AND a \`responder-*\` answer containing the run marker from a **different libp2p peer** on the live gnostr topic." >> "$GITHUB_STEP_SUMMARY"
@@ -551,6 +559,13 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+
+      - name: Record beam PASS for the promote job
+        if: steps.agent.outputs.passed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: beam-pass-${{ github.run_id }}-copilot
+          path: ${{ runner.temp }}/beam-pass
 
   # OpenCode leg model resolution. The dispatch dropdown can't be populated
   # from a live query, so this job does it in-workflow and the legs consume
@@ -790,6 +805,7 @@ jobs:
           path: ${{ runner.temp }}/chat-addrs
 
       - name: OpenCode must figure out the gnostr chat AND get a real answer
+        id: agent
         if: steps.preflight.outputs.callable == 'true'
         timeout-minutes: 12
         continue-on-error: true   # PoC: orange on failure, never red
@@ -865,7 +881,10 @@ jobs:
             if grep -q "WITNESS FAIL" "$RUNNER_TEMP/witness.out" 2>/dev/null; then VERDICT=fail; break; fi
             sleep 4
           done
+          # machine-readable outcome for the beam-promote job (artifact below)
+          if [ "$VERDICT" = "pass" ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
           if [ "$VERDICT" = "pass" ]; then
+            echo "${{ matrix.model }}" > "$RUNNER_TEMP/beam-pass"
             echo "::notice::OPENCODE CHAT INTEROP PASS -- opencode (${{ matrix.model }}) got a real answer from another instance"
             echo "### OpenCode chat interop -- ${{ matrix.model }} -- PASS" >> "$GITHUB_STEP_SUMMARY"
             echo "The witness received OpenCode's question AND a \`responder-*\` answer containing the run marker from a **different libp2p peer** on the live gnostr topic." >> "$GITHUB_STEP_SUMMARY"
@@ -881,3 +900,79 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+
+      - name: Record beam PASS for the promote job
+        if: steps.agent.outputs.passed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: beam-pass-${{ github.run_id }}-opencode-${{ env.slug }}
+          path: ${{ runner.temp }}/beam-pass
+
+  # If ANY model-beam leg got a WITNESS PASS (recorded as a beam-pass-<run_id>
+  # artifact), land a patch version bump on master. The commit is UNSIGNED by
+  # necessity — the project's GPG key never leaves the maintainer's control;
+  # per convention the maintainer tags manually (signed) to trigger release.
+  # Opt out with the bump_on_pass input. Concurrency-guarded so two passing
+  # dispatches can't race the push.
+  beam-promote:
+    name: Beam promote — version bump on PASS
+    if: always() && inputs.bump_on_pass == true
+    needs: [copilot-chat, opencode-chat]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: beam-promote
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+
+      - name: Look for a beam-pass artifact
+        id: pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          names=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --jq '.artifacts[].name' 2>/dev/null | grep "^beam-pass-${{ github.run_id }}" || true)
+          if [ -z "$names" ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "no beam-pass artifact — the model beam did not PASS, no bump"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "beam PASS recorded by: $(echo "$names" | tr '\n' ' ')"
+          fi
+
+      - name: Bump patch version on master
+        if: steps.pass.outputs.found == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          OLD=$(node -p "require('./package.json').version")
+          npm version patch --no-git-tag-version
+          NEW=$(node -p "require('./package.json').version")
+          # keep the three version sites in sync (package.json via npm; the
+          # other two guarded — drift warns instead of silently missing)
+          if grep -q "version: '$OLD'" src/daemon.js; then
+            sed -i "s/version: '$OLD'/version: '$NEW'/" src/daemon.js
+          else
+            echo "::warning::src/daemon.js has no 'version: \"$OLD\"' — check version drift"
+          fi
+          if grep -q "ipfs-agentd/$OLD" src/tools.js; then
+            sed -i "s#ipfs-agentd/$OLD#ipfs-agentd/$NEW#" src/tools.js
+          else
+            echo "::warning::src/tools.js has no 'ipfs-agentd/$OLD' — check version drift"
+          fi
+          git add package.json package-lock.json src/daemon.js src/tools.js
+          git commit -m "chore: bump version to $NEW (model beam interop pass, run ${{ github.run_id }})"
+          git push origin master
+          echo "::notice::version bumped $OLD -> $NEW on master — tag manually (signed) to release"
+          {
+            echo "### Beam promote"
+            echo ""
+            echo "Model beam interop **PASS** (run ${{ github.run_id }}) — version bumped **$OLD → $NEW** on master (unsigned bot commit). Tag manually (signed) to trigger the release."
+          } >> "$GITHUB_STEP_SUMMARY"

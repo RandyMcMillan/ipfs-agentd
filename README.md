@@ -214,7 +214,7 @@ URLs rendered).
   leg), `windows`, `macos` — and the model-beam inputs `copilot` (default
   off), `opencode_model`, `opencode_models`, `opencode_free`, `verbose`
   (streams the agents' full chat — thinking + logs — into the job log and
-  step summary; see below). A publisher daemon seeds the repo bundle and
+  step summary), `bump_on_pass` (see below). A publisher daemon seeds the repo bundle and
   re-announces it every 15s; an independent fetcher node proves the bundle by CID
   (bitswap) and by name (topic discovery); on linux a Docker container joins as a
   third independent peer (fetch by CID/name + container-side
@@ -259,6 +259,13 @@ URLs rendered).
     arbitrary runners, and relay circuits are short-lived — everything
     re-dials/relays at 10s cadence). Select ≥2 OSes for a true cross-OS
     answer; the responder's platform appears in its answer text.
+    Each leg preflights its model (HTTP key/quota probe + a minimal
+    `opencode run`, retried) before starting the witness — a doomed leg ends
+    orange in ~1 min with the API error instead of burning the timeout. On
+    any leg's **WITNESS PASS**, a `beam-promote` job bumps the patch version
+    on master (unsigned bot commit — the GPG key stays local; tag manually,
+    signed, to release). Both behaviors are dispatch-togglable
+    (`verbose`, `bump_on_pass`).
 - **docker.yml** — image build on PRs; build + GHCR publish on push to master.
 - **release.yml** — tag push (`v*`) → GitHub release with the bundle.
 - **deploy-gh-pages.yml** — pins the built web app and deploys the IPFS site.
