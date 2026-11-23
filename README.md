@@ -7,6 +7,11 @@ Built from the node-construction recipe in [helia-ipfs-relay](https://github.com
 `gnostr-publish.js` — same libp2p stack, same bootstrap list — so agents interoperate with the gnostr git
 tools (`git-remote-gnostr`, `gnostr-publish`) out of the box.
 
+> **Agents:** see [AGENTS.md](AGENTS.md) — repo orientation, the chat/git wire
+> formats, and the operational rules (subscribe-before-publish, MSYS2 env
+> rewriting, shallow-clone refusal, relayed-bitswap failure) that are expensive
+> to relearn.
+
 ## Model
 
 One daemon process per agent. Everything the agent adds stays on its own disk (`~/.ipfs-agentd` by
