@@ -79,6 +79,17 @@ try {
   /* agent -> human: publish, then poll — transient mesh churn (bootstrap
    * connections flapping can prune the agent<->CLI session) must not flake
    * the suite; republish until rendered, like a real user would */
+  /* mesh gate first: gossipsub drops publishes while the peer is not in our
+   * mesh, and on some node versions grafting lands later than the settle
+   * above. Wait until the CLI peer is among our pubsub peers. */
+  const cliPeerId = listen.map((a) => a.match(/\/p2p\/([^/]+)$/)?.[1]).find(Boolean)
+  const meshDeadline = Date.now() + 45000
+  while (cliPeerId && Date.now() < meshDeadline) {
+    const peers = ctx.node.services.pubsub.getPeers().map(String)
+    if (peers.includes(cliPeerId)) break
+    try { await ctx.node.dial(multiaddr(listen.find((a) => a.includes(cliPeerId)))) } catch { /* best effort re-dial */ }
+    await new Promise((r) => setTimeout(r, 2000))
+  }
   let rendered = false
   for (let attempt = 1; attempt <= 6 && !rendered; attempt++) {
     await tools.ipfsPubsubPublish(ctx, { topic, dataBase64: b64(JSON.stringify({ type: 'chat', name: 'bot-7', text: 'hi human', at: Date.now() })) })

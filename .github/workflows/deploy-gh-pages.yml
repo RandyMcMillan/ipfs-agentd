@@ -63,7 +63,7 @@ jobs:
         if: github.event_name == 'schedule'
         id: tag
         run: |
-          TAG=$(git ls-remote --refs --tags --sort=-v:refname https://github.com/RandyMcMillan/ipfs-gh-pages.git 'v*' | head -n 1 | cut -f2 | sed 's|^refs/tags/||')
+          TAG=$(git ls-remote --refs --tags --sort=-v:refname https://github.com/RandyMcMillan/ipfs-gh-pages.git 'v*' | head -n 1 | cut -f2 | sed 's|^refs/tags/||' || true)
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       - name: Restore deployment marker (schedule only)
         if: github.event_name == 'schedule'
@@ -102,7 +102,7 @@ jobs:
           # The build bakes the repo's latest v* tag into the page (the
           # header "latest release" chip). The default checkout is shallow
           # and has no tags — fetch just the newest tag, no full history.
-          TAG=$(git ls-remote --refs --tags --sort=-v:refname origin 'v*' | head -n 1 | cut -f2 | sed 's|^refs/tags/||')
+          TAG=$(git ls-remote --refs --tags --sort=-v:refname origin 'v*' | head -n 1 | cut -f2 | sed 's|^refs/tags/||' || true)
           if [ -n "$TAG" ]; then
             git fetch --depth 1 origin "refs/tags/$TAG:refs/tags/$TAG"
             echo "Fetched latest tag for the build identity: $TAG"
@@ -117,11 +117,11 @@ jobs:
           # action repo's current state: newest v* tag, else HEAD.
           REF="${{ github.event.inputs.action_ref }}"
           if [ -z "$REF" ]; then
-            REF=$(git ls-remote --refs --tags --sort=-v:refname https://github.com/RandyMcMillan/ipfs-gh-pages.git 'v*' | head -n 1 | cut -f2 | sed 's|^refs/tags/||')
+            REF=$(git ls-remote --refs --tags --sort=-v:refname https://github.com/RandyMcMillan/ipfs-gh-pages.git 'v*' | head -n 1 | cut -f2 | sed 's|^refs/tags/||' || true)
             if [ -n "$REF" ]; then
               echo "Auto-detected newest tag of RandyMcMillan/ipfs-gh-pages: $REF"
             else
-              REF=$(git ls-remote https://github.com/RandyMcMillan/ipfs-gh-pages.git HEAD | cut -f1)
+              REF=$(git ls-remote https://github.com/RandyMcMillan/ipfs-gh-pages.git HEAD | cut -f1 || true)
               echo "No v* tags found — using default-branch HEAD: $REF"
             fi
           fi
@@ -174,7 +174,7 @@ jobs:
       - name: Record deployment marker (daily gate)
         id: marker
         run: |
-          TAG=$(git ls-remote --refs --tags --sort=-v:refname https://github.com/RandyMcMillan/ipfs-gh-pages.git 'v*' | head -n 1 | cut -f2 | sed 's|^refs/tags/||')
+          TAG=$(git ls-remote --refs --tags --sort=-v:refname https://github.com/RandyMcMillan/ipfs-gh-pages.git 'v*' | head -n 1 | cut -f2 | sed 's|^refs/tags/||' || true)
           echo "key=deployed-${{ github.sha }}-${TAG}" >> "$GITHUB_OUTPUT"
           echo "${{ github.sha }} $TAG" > .deployed-marker
       - name: Save deployment marker
