@@ -6,6 +6,12 @@ on:
     tags-ignore: ['v*']        # tags gate on release.yml instead
   pull_request:
 
+# bash everywhere: on windows runners GitHub maps this to Git Bash,
+# which is what the run blocks are written for
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test:
     runs-on: ubuntu-latest

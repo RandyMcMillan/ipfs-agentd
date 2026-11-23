@@ -37,6 +37,12 @@ on:
 env:
   INTEROP_LIVE_SECS: ${{ github.event.inputs.live_seconds || '900' }}
 
+# bash everywhere: on windows runners GitHub maps this to Git Bash, which is
+# what every run block below is written for
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # build the runner matrix from the per-OS selects; empty → whole workflow skips
   matrix:
@@ -46,11 +52,16 @@ jobs:
     steps:
       - id: set
         run: |
-          include='[]'
-          if [ "${{ inputs.linux }}"   = "true" ]; then include=$(echo "$include" | jq '. + [{"os":"ubuntu-latest",  "docker":true}]');  fi
-          if [ "${{ inputs.windows }}" = "true" ]; then include=$(echo "$include" | jq '. + [{"os":"windows-latest", "docker":false}]'); fi
-          if [ "${{ inputs.macos }}"   = "true" ]; then include=$(echo "$include" | jq '. + [{"os":"macos-latest",   "docker":false}]'); fi
-          echo "include=$include" >> "$GITHUB_OUTPUT"
+          # build the matrix JSON without external tools (jq availability is not
+          # guaranteed on all runner images); booleans arrive from the dispatch
+          # inputs as the literal strings true/false
+          include=''; sep=''
+          add() { include="${include}${sep}{\"os\":\"$1\",\"docker\":$2}"; sep=','; }
+          [ "${{ inputs.linux }}"   = "true" ] && add ubuntu-latest true  || echo 'linux not selected'
+          [ "${{ inputs.windows }}" = "true" ] && add windows-latest false || echo 'windows not selected'
+          [ "${{ inputs.macos }}"   = "true" ] && add macos-latest false || echo 'macos not selected'
+          include="[$include]"
+          echo "include=$include" >> "$GITHUB_OUTPUT"   # single-line JSON
           echo "matrix: $include"
 
   live-interop:
@@ -62,77 +73,88 @@ jobs:
         include: ${{ fromJSON(needs.matrix.outputs.include) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0   # the publisher bundles $GITHUB_WORKSPACE — depth-1
+                           # checkouts produce bundles missing HEAD's parents
 
-      - name: Node (unix — nvm per .nvmrc)
-        if: runner.os != 'Windows'
-        uses: ./.github/actions/install-nvm
-      - name: Node (windows)
-        if: runner.os == 'Windows'
+      # .nvmrc stays the single source for the version; setup-node covers all
+      # three OSes (the nvm bootstrap proved flaky on macOS runners)
+      - name: Node (.nvmrc via setup-node)
         uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
 
-      - uses: actions/cache@v4
-        if: runner.os != 'Windows'
-        with:
-          path: ~/.npm
-          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: npm-${{ runner.os }}-
       - run: npm ci --no-audit --no-fund
 
-      - name: Start publisher daemon (background seeder)
+      # ONE step for the non-docker legs. Windows runners kill the step's
+      # process tree when the step ends, so the publisher, the cross-daemon
+      # fetch, the helper clone AND the live window must share a single step
+      # there; unix runners persist background processes across steps, so the
+      # docker legs and the live window run as their own steps below.
+      - name: Live interop — publisher + cross-daemon fetch + helper clone
+        timeout-minutes: 28
         run: |
-          mkdir -p /tmp/interop
-          GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4011 \
+          set -u
+          # git-bash (MSYS2) rewrites env VALUES that look like POSIX paths
+          # when spawning native processes: GNOSTR_LISTEN lost its leading
+          # slash (publisher died with InvalidMultiaddrError). ARG_CONV_EXCL
+          # only covers arguments, so multiaddrs travel via staged FILES —
+          # native paths for the pointers, contents read after the MSYS
+          # boundary in src/node.js (GNOSTR_*_FILE).
+          export MSYS2_ARG_CONV_EXCL='*'
+          export MSYS2_ENV_CONV_EXCL='*'
+          INTEROP_OUT="$RUNNER_TEMP/interop"   # valid on linux, macOS AND windows
+          mkdir -p "$INTEROP_OUT"
+          echo "INTEROP_OUT=$INTEROP_OUT" >> "$GITHUB_ENV"
+          printf '/ip4/127.0.0.1/tcp/4011' > "$INTEROP_OUT/listen"
+          GNOSTR_LISTEN_FILE="$INTEROP_OUT/listen" \
           INTEROP_REPO=$GITHUB_WORKSPACE \
           INTEROP_NAME=ipfs-agentd-ci-${{ github.run_id }}-${{ matrix.os }} \
-          node test/interop-publisher.mjs 2>/tmp/interop/publisher.log &
-          echo $! > /tmp/interop-pub.pid
-          echo "publisher pid $(cat /tmp/interop-pub.pid), live window ${{ env.INTEROP_LIVE_SECS }}s"
+          INTEROP_OUT=$INTEROP_OUT \
+          node test/interop-publisher.mjs 2>"$INTEROP_OUT/publisher.log" &
+          echo $! > "$INTEROP_OUT/pub.pid"
+          echo "publisher pid $(cat "$INTEROP_OUT/pub.pid"), live window ${{ env.INTEROP_LIVE_SECS }}s"
 
-      - name: Wait for publisher readiness
-        timeout-minutes: 3
-        run: |
-          for i in $(seq 1 60); do [ -f /tmp/interop/cid ] && break; sleep 2; done
-          if [ ! -f /tmp/interop/cid ]; then echo 'publisher did not become ready'; tail -50 /tmp/interop/publisher.log; exit 1; fi
-          echo "CID=$(cat /tmp/interop/cid)" >> "$GITHUB_ENV"
-          echo "PEER=$(cat /tmp/interop/peer)" >> "$GITHUB_ENV"
-          echo "NAME=$(cat /tmp/interop/name)" >> "$GITHUB_ENV"
+          for i in $(seq 1 90); do [ -f "$INTEROP_OUT/cid" ] && break; sleep 2; done
+          if [ ! -f "$INTEROP_OUT/cid" ]; then echo 'publisher did not become ready'; tail -50 "$INTEROP_OUT/publisher.log"; exit 1; fi
+          CID=$(cat "$INTEROP_OUT/cid"); PEER=$(cat "$INTEROP_OUT/peer"); NAME=$(cat "$INTEROP_OUT/name")
+          echo "CID=$CID" >> "$GITHUB_ENV"; echo "PEER=$PEER" >> "$GITHUB_ENV"; echo "NAME=$NAME" >> "$GITHUB_ENV"
           echo "publisher ready: name=$NAME cid=$CID peer=$PEER"
 
-      - name: Cross-daemon fetch (independent node, bitswap + topic discovery)
-        timeout-minutes: 6
-        run: GNOSTR_BOOTSTRAP=/ip4/127.0.0.1/tcp/4011/p2p/$PEER node test/interop-fetch.mjs
+          echo '::group::cross-daemon fetch (bitswap by CID + topic discovery by name)'
+          printf '/ip4/127.0.0.1/tcp/4011/p2p/%s' "$PEER" > "$INTEROP_OUT/bootstrap"
+          GNOSTR_BOOTSTRAP_FILE="$INTEROP_OUT/bootstrap" INTEROP_OUT=$INTEROP_OUT node test/interop-fetch.mjs
+          echo '::endgroup::'
 
-      - name: git-remote-gnostr interop (real CLI helper clone)
-        timeout-minutes: 12
-        # the helper is ESM — copying it off its repo breaks module resolution,
-        # so shim it: a PATH-visible wrapper execs the real script in /tmp/relay.
-        # continue-on-error: the live window below must open for external
-        # confirmation even if this step regresses.
-        continue-on-error: true
-        run: |
-          git clone -q https://github.com/RandyMcMillan/helia-ipfs-relay /tmp/relay
-          cd /tmp/relay && npm install --no-audit --no-fund
-          git config --global protocol.gnostr.allow always
-          mkdir -p "$HOME/.local/bin"
-          printf '#!/bin/sh\nexec node /tmp/relay/git-remote-gnostr.js "$@"\n' > "$HOME/.local/bin/git-remote-gnostr"
-          chmod +x "$HOME/.local/bin/git-remote-gnostr"
-          export PATH="$HOME/.local/bin:$PATH"
-          echo "cloning gnostr://cid/$CID via git-remote-gnostr…"
-          GNOSTR_BOOTSTRAP="/ip4/127.0.0.1/tcp/4011/p2p/$PEER" timeout 300 git clone "gnostr://cid/$CID" /tmp/interop-clone
-          test -f /tmp/interop-clone/package.json
-          test -f /tmp/interop-clone/src/mcp-server.js
-          echo 'cloned tree head:'
-          git -C /tmp/interop-clone log --oneline | head -5
+          echo '::group::git-remote-gnostr interop (real CLI helper clone)'
+          # the helper is ESM — copying it off its repo breaks module resolution,
+          # so shim it: a PATH-visible wrapper execs the real script in /tmp/relay.
+          # non-fatal: the live window must open even if this leg regresses.
+          CLONE_DIR=$(mktemp -d)
+          git clone -q https://github.com/RandyMcMillan/helia-ipfs-relay /tmp/relay && \
+          (cd /tmp/relay && npm install --no-audit --no-fund) && \
+          git config --global protocol.gnostr.allow always && \
+          mkdir -p "$HOME/.local/bin" && \
+          printf '#!/bin/sh\nexec node /tmp/relay/git-remote-gnostr.js "$@"\n' > "$HOME/.local/bin/git-remote-gnostr" && \
+          chmod +x "$HOME/.local/bin/git-remote-gnostr" && \
+          GNOSTR_BOOTSTRAP="/ip4/127.0.0.1/tcp/4011/p2p/$PEER" PATH="$HOME/.local/bin:$PATH" \
+            timeout 300 git clone "gnostr://cid/$CID" "$CLONE_DIR" && \
+          test -f "$CLONE_DIR/package.json" && \
+          test -f "$CLONE_DIR/src/mcp-server.js" && \
+          git -C "$CLONE_DIR" log --oneline | head -5 \
+          || echo "::warning::git-remote-gnostr helper clone leg failed (non-fatal)"
+          echo '::endgroup::'
+
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "::notice::LIVE name=$NAME bundle=$CID peer=$PEER — ad on gnostr topic, seeding for ${{ env.INTEROP_LIVE_SECS }}s total"
+            while kill -0 "$(cat "$INTEROP_OUT/pub.pid")" 2>/dev/null; do sleep 15; done
+            echo "publisher exited — full log:"
+            cat "$INTEROP_OUT/publisher.log"
+          fi
 
       - name: Docker peer — build image
         if: matrix.docker
@@ -142,23 +164,36 @@ jobs:
       - name: Docker peer — container fetcher (independent node in-container)
         if: matrix.docker
         timeout-minutes: 8
+        # run from the image's OWN baked /app (src + musl-compatible
+        # node_modules) — bind-mounting the runner's glibc-built
+        # node_modules over it breaks native modules on alpine.
         run: |
+          set -o pipefail
+          # recreate the state dir: $RUNNER_TEMP/interop does not reliably
+          # survive between steps on hosted runners (chmod failed with ENOENT
+          # even though GITHUB_ENV carried the path). CID/NAME go via env —
+          # only the fetcher's store needs the mounted dir.
+          mkdir -p "$INTEROP_OUT"
+          # hosted-runner uid (1001) != image node uid (1000), and anything
+          # the host wrote must be writable at EVERY level for the container
+          chmod -R 777 "$INTEROP_OUT" 2>/dev/null || true
           docker run --rm --network host \
-            -v "$GITHUB_WORKSPACE:/work" -w /work \
-            -v /tmp/interop:/tmp/interop \
+            -v "$INTEROP_OUT:/tmp/interop" \
             -e GNOSTR_BOOTSTRAP=/ip4/127.0.0.1/tcp/4011/p2p/$PEER \
+            -e INTEROP_CID=$CID \
+            -e INTEROP_NAME=$NAME \
             -e INTEROP_OUT=/tmp/interop \
-            ipfs-agentd:interop node test/interop-fetch.mjs
+            ipfs-agentd:interop node test/interop-fetch.mjs 2>&1 | tee "$INTEROP_OUT/docker-fetcher.log"
 
       - name: Docker peer — container clone via in-repo git-remote-gnostr
         if: matrix.docker
         timeout-minutes: 8
         run: |
+          set -o pipefail
           docker run --rm --network host \
-            -v "$GITHUB_WORKSPACE:/work" -w /work \
             ipfs-agentd:interop sh -c '
               mkdir -p /tmp/bin
-              printf "#!/bin/sh\nexec node /work/src/git-remote-gnostr.js \"\$@\"\n" > /tmp/bin/git-remote-gnostr
+              printf "#!/bin/sh\nexec node /app/src/git-remote-gnostr.js \"\$@\"\n" > /tmp/bin/git-remote-gnostr
               chmod +x /tmp/bin/git-remote-gnostr
               export PATH=/tmp/bin:$PATH
               git config --global protocol.gnostr.allow always
@@ -166,14 +201,15 @@ jobs:
               GNOSTR_BOOTSTRAP="/ip4/127.0.0.1/tcp/4011/p2p/'"$PEER"'" git clone "gnostr://cid/'"$CID"'" /tmp/clone
               git -C /tmp/clone log --oneline -2
               git -C /tmp/clone fsck --strict
-            '
+            ' 2>&1 | tee "$INTEROP_OUT/docker-clone.log"
 
       - name: Live window — publisher keeps seeding (external confirmation open)
+        if: runner.os != 'Windows'   # windows already waited out the window in the merged step
         timeout-minutes: 25
         run: |
           echo "::notice::LIVE name=$NAME bundle=$CID peer=$PEER — ad on gnostr topic, seeding for ${{ env.INTEROP_LIVE_SECS }}s total"
           echo "tail of publisher log:"
-          tail -5 /tmp/interop/publisher.log
-          while kill -0 "$(cat /tmp/interop-pub.pid)" 2>/dev/null; do sleep 15; done
+          tail -5 "$INTEROP_OUT/publisher.log"
+          while kill -0 "$(cat "$INTEROP_OUT/pub.pid")" 2>/dev/null; do sleep 15; done
           echo "publisher exited — full log:"
-          cat /tmp/interop/publisher.log
+          cat "$INTEROP_OUT/publisher.log"

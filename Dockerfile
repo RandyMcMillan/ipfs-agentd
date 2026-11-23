@@ -29,6 +29,9 @@ RUN for i in 1 2 3 4 5; do \
       [ "$i" = 5 ] && exit 1; \
     done
 COPY src ./src
+# interop tooling ships in the image so CI can run a containerized peer
+# straight from the baked /app (no bind-mount of host node_modules)
+COPY test ./test
 
 # non-root runtime; repos arrive as volume mounts. Override RUN_USER=root for
 # base images without a 'node' account (e.g. act runner images used offline).

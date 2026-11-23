@@ -16,6 +16,12 @@ env:
   REGISTRY: ghcr.io
   IMAGE: ghcr.io/${{ github.repository }}
 
+# bash everywhere: on windows runners GitHub maps this to Git Bash,
+# which is what the run blocks are written for
+defaults:
+  run:
+    shell: bash
+
 jobs:
   image:
     runs-on: ubuntu-latest
