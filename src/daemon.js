@@ -31,7 +31,7 @@ export async function main (argv = process.argv.slice(2)) {
   const ctx = await createAgentNode({ repoPath: repo, log })
   log('node started (' + ctx.node.getPeers().length + ' peers at boot; bootstrap dials still landing)')
 
-  const server = new McpServer({ name: 'ipfs-agentd', version: '0.3.5' })
+  const server = new McpServer({ name: 'ipfs-agentd', version: '0.3.6' })
 
   function def (name, description, shape, fn) {
     server.tool(name, description, shape, async (args) => {

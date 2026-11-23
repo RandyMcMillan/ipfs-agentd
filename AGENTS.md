@@ -174,6 +174,12 @@ adjust topics/paths/CIDs:
   use `fetch-depth: 0`.
 - Name discovery (`gnostr://<name>`) is unauthenticated, newest ad wins;
   adversarial settings → `gnostr://cid/<CID>`.
+- `@multiformats/multiaddr` is **v13** — `getPeerId()` is gone. The peer id is
+  the last component with code 421: `ma.getComponents().at(-1).value`.
+- GitHub Actions background gotcha: `setsid nohup cmd &; echo $!` captures the
+  wrong pid — setsid forks when the job is a process-group leader, so `$!` is
+  a short-lived parent. Kill by pattern (`ps -eo pid,args | grep …`), not pid
+  files.
 
 ## CI / gh
 
@@ -201,6 +207,21 @@ Workflows:
   headers). Docker-leg gotchas: hosted-runner uid (1001) ≠ image `node` uid
   (1000) → `chmod -R 777` the mounted state dir; `$RUNNER_TEMP` is wiped
   between steps → docker legs recreate state dirs and take CID/name via env.
+  Extra legs on every dispatch (independent of the OS matrix): **deployed-site**
+  (probes the deployed gh-pages app; `scripts/check-deployed-site.mjs` +
+  `scripts/check-deployed-peer.mjs`, playwright chromium) and **copilot-chat**
+  (non-fatal PoC — Copilot CLI gets only a hint, must figure out the chat,
+  ask a run-marked question on gnostr and receive a REAL answer from a matrix
+  leg's `scripts/chat-responder.mjs`; the witness `scripts/listen-chat.mjs`
+  passes only on question + `responder-*` answer from DIFFERENT libp2p peers).
+  Cross-runner transport for the answer: the witness uploads its relay addrs
+  as the `chat-bridge-<run_id>` artifact; legs poll `gh run download` and the
+  responder dials them. Do NOT rely on the public gnostr mesh to deliver
+  between arbitrary runners — locally it carried zero envelopes in 90s.
+  Relay circuits are short-lived (~1 min) and re-dial-prone: everything
+  (witness relays ×10, responder re-dials, answers ×12) runs at 10s cadence,
+  and both sides `tagPeer` their topic peers or the connection managers prune
+  the bridge links within seconds.
 
 Running CI locally with `act` (sandbox: dockerd started via `nohup dockerd &`,
 act binary at `/mnt/agents/opt/act`, runner image
