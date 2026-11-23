@@ -8,12 +8,13 @@ runs:
   using: composite
   steps:
     - uses: actions/checkout@v4
-    - uses: ./.github/actions/install-nvm
-    - uses: actions/cache@v4
+    # .nvmrc stays the single source for the version; setup-node is the
+    # battle-tested path (install-nvm's curl|bash bootstrap became a
+    # fast-fail source on hosted runners)
+    - uses: actions/setup-node@v4
       with:
-        path: ~/.npm
-        key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-        restore-keys: npm-${{ runner.os }}-
+        node-version-file: .nvmrc
+        cache: npm
     - name: npm ci (retry — registry/GitHub flakes)
       run: |
         for i in 1 2 3 4 5; do
