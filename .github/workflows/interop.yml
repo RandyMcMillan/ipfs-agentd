@@ -213,3 +213,62 @@ jobs:
           while kill -0 "$(cat "$INTEROP_OUT/pub.pid")" 2>/dev/null; do sleep 15; done
           echo "publisher exited — full log:"
           cat "$INTEROP_OUT/publisher.log"
+
+  # Interop against the DEPLOYED gh-pages site (https://randymcmillan.github.io/
+  # ipfs-agentd/). The site is built by deploy-gh-pages.yml from master HEAD;
+  # the page itself is a browser Helia peer CI can't drive, so this leg probes
+  # everything around it with scripts/check-deployed-site.mjs:
+  #   1. page responds over HTTPS and looks like the ipfs-agentd app (hard)
+  #   2. repo-manifest.json parses: root CID + per-file CIDs well-formed (hard)
+  #   3. swarm probe: independent agent node stats/cats the advertised CIDs
+  #      over bitswap (soft — the deploy's Pinata/Filebase pinning secrets are
+  #      optional, so unprovidable content warns instead of failing)
+  # Runs on every dispatch, independent of the OS matrix.
+  deployed-site:
+    name: Deployed site interop (gh-pages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1   # this leg never bundles the checkout
+
+      - name: Node (.nvmrc via setup-node)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: npm ci (retry — registry/GitHub flakes)
+        run: |
+          for i in 1 2 3 4 5; do
+            npm ci --no-audit --no-fund && exit 0
+            echo "::warning::npm ci attempt $i failed — retrying in $((i*10))s"
+            sleep $((i*10))
+          done
+          exit 1
+
+      - name: Probe deployed site (HTTPS + manifest + swarm)
+        run: node scripts/check-deployed-site.mjs
+        env:
+          SITE_URL: https://randymcmillan.github.io/ipfs-agentd
+          DEPLOYED_REF: ${{ inputs.ref }}
+
+      # the Peer tab (#/peer) runs a full Helia node IN the page: libp2p boot,
+      # relay reservations, mainline swarm dials over wss/webtransport/webrtc.
+      # Headless chromium loads the deployed page and we assert the embedded
+      # peer actually comes up — the strongest proof the deployed app works
+      # as an IPFS peer without touching a browser by hand.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Peer tab — in-browser Helia node joins the swarm (playwright)
+        timeout-minutes: 8
+        run: |
+          npx playwright install chromium
+          node scripts/check-deployed-peer.mjs
+        env:
+          SITE_URL: https://randymcmillan.github.io/ipfs-agentd
