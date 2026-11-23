@@ -1,2 +1,6 @@
 node_modules/
 *.log
+# SEA single-executable build artifacts (release.yml)
+dist/
+sea-config.json
+sea-prep.blob

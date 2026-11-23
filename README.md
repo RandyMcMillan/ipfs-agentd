@@ -267,5 +267,11 @@ URLs rendered).
     signed, to release). Both behaviors are dispatch-togglable
     (`verbose`, `bump_on_pass`).
 - **docker.yml** — image build on PRs; build + GHCR publish on push to master.
-- **release.yml** — tag push (`v*`) → GitHub release with the bundle.
+- **release.yml** — signed tag push (`v*`) fires the release pipeline: full test
+  gate → tag-vs-`package.json` version guard → single-executable binaries
+  (Node SEA + esbuild, built natively on linux-x64 / windows-x64 /
+  macos-arm64, smoke-tested) attached to the GitHub release together with a
+  git bundle of the released commit; optional `npm publish --provenance`
+  when the `NPM_TOKEN` secret is set. Images (incl. version tags) publish
+  via docker.yml.
 - **deploy-gh-pages.yml** — pins the built web app and deploys the IPFS site.

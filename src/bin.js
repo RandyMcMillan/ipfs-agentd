@@ -26,27 +26,37 @@ Usage:
   ipfs-agentd --help    Show this help.
 `
 
-const [cmd, ...rest] = process.argv.slice(2)
+/* Wrapped in async main() rather than top-level await so the tree bundles
+ * to CommonJS — Node SEA (single-executable apps) only runs an embedded
+ * CJS script (see .github/workflows/release.yml). */
+async function main() {
+  const [cmd, ...rest] = process.argv.slice(2)
 
-if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
-  process.stdout.write(USAGE)
-} else if (cmd === 'chat') {
-  const { chatMain } = await import('./cli.js')
-  await chatMain(rest)
-} else if (cmd === 'serve') {
-  const { serveMain } = await import('./web.js')
-  await serveMain(rest)
-} else if (cmd === 'daemon') {
-  const { main } = await import('./daemon.js')
-  await main(rest)
-} else if (cmd === undefined) {
-  const { main } = await import('./daemon.js')
-  await main([])
-} else if (cmd.startsWith('-')) {
-  /* bare flags with no subcommand = daemon */
-  const { main } = await import('./daemon.js')
-  await main([cmd, ...rest])
-} else {
-  process.stderr.write('unknown command: ' + cmd + '\n\n' + USAGE)
-  process.exit(1)
+  if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
+    process.stdout.write(USAGE)
+  } else if (cmd === 'chat') {
+    const { chatMain } = await import('./cli.js')
+    await chatMain(rest)
+  } else if (cmd === 'serve') {
+    const { serveMain } = await import('./web.js')
+    await serveMain(rest)
+  } else if (cmd === 'daemon') {
+    const { main } = await import('./daemon.js')
+    await main(rest)
+  } else if (cmd === undefined) {
+    const { main } = await import('./daemon.js')
+    await main([])
+  } else if (cmd.startsWith('-')) {
+    /* bare flags with no subcommand = daemon */
+    const { main } = await import('./daemon.js')
+    await main([cmd, ...rest])
+  } else {
+    process.stderr.write('unknown command: ' + cmd + '\n\n' + USAGE)
+    process.exit(1)
+  }
 }
+
+main().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})
