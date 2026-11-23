@@ -24,5 +24,13 @@ runs:
         done
         exit 1
       shell: bash
-    - run: npm test
+    - name: npm test
+      run: npm test 2>&1 | tee "$RUNNER_TEMP/npm-test.log"
+      shell: bash
+    - name: failure diagnostics (public)
+      if: failure()
+      run: |
+        LOG="$RUNNER_TEMP/npm-test.log"
+        { echo '### npm test failed — output tail'; echo ''; echo '\`\`\`'; tail -n 80 "$LOG" 2>/dev/null; echo '\`\`\`'; } >> "$GITHUB_STEP_SUMMARY"
+        tail -n 5 "$LOG" 2>/dev/null | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::$line"; done
       shell: bash
