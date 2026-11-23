@@ -72,7 +72,7 @@ addresses (or share a reachable rendezvous) first.
 | `ipfs_pubsub_publish` | gossipsub publish (default topic `gnostr`) |
 | `ipfs_pubsub_pull` | Poll queued messages for a topic (subscribe-on-first-pull, bounded queue) |
 | `ipfs_name_publish` | Publish CID under a one-shot IPNS key (name = key PeerId) |
-| `git_publish_repo` | `git bundle --all` → IPFS → pin → announce on gnostr topic (wire-compatible with `git-remote-gnostr`) |
+| `git_publish_repo` | `git bundle --all` → IPFS → pin → announce on gnostr topic (wire-compatible with `git-remote-gnostr`). Refuses shallow clones (e.g. checkout `fetch-depth 1`) — a depth-1 bundle misses parents |
 | `git_fetch_bundle` | Fetch a bundle: `gnostr://cid/<CID>` directly or `gnostr://<name>` via topic discovery; saves to disk for `git bundle verify`/`clone` |
 
 ## Git bridge
@@ -87,6 +87,11 @@ which is content-addressed.
 Caveats: publishing with zero pubsub peers returns `published:false` (bundle is still on
 IPFS and pinned — republish when peers connect). The daemon is the bitswap seeder while
 alive; stop it and the bundle is only fetchable if someone else pinned the CID.
+Publishers should **subscribe** to the topic, not just publish: gossipsub's fanout
+path (publish without subscribe) samples recipients once and never re-samples while
+re-publishing — on the public swarm it freezes full of other topic subscribers and
+late-joining fetchers never hear the ad. The mesh path (subscribe) grafts new topic
+peers every heartbeat.
 
 ### git remote helpers
 
@@ -157,6 +162,7 @@ URLs rendered).
 | `IPFS_AGENTD_REPO` | `~/.ipfs-agentd` | Blockstore/datastore directory |
 | `GNOSTR_BOOTSTRAP` | — | Extra comma-separated multiaddrs to dial at boot |
 | `GNOSTR_LISTEN` | — | Listen multiaddrs when running on a public host |
+| `GNOSTR_LISTEN_FILE` / `GNOSTR_BOOTSTRAP_FILE` | — | File holding the multiaddr value. Windows git-bash (MSYS2) rewrites env *values* that look like POSIX paths when spawning native node — no exclude switch covers env vars. Stage the multiaddr in a file (a native path survives) and pass these; the file wins over the env var. Read at node startup in `src/node.js` |
 | `REBOOTSTRAP_SECS` | `60` | Re-dial unconnected bootstrap peers every N s (0 disables) |
 
 ## Notes / limits
@@ -192,10 +198,26 @@ URLs rendered).
   per-instance repo mounts, `--publish` announces on gnostr; Dockerfile +
   docker-compose (one instance per container). e2e: `test/web-e2e.mjs`; image
   build + container smoke verified locally.
-- Future: remote-pinning backup for durability; named IPNS key reuse; dual-role relay.
+- Future: web app as an active IPFS peer — gnostr repo discovery, responsive repo
+  cards, per-repo clone-as-git / CAR download options, bookmarks; remote-pinning
+  backup for durability; named IPNS key reuse; dual-role relay.
 
 ## CI
 
-- **ci.yml** — `npm ci` + full `npm test` (smoke, MCP e2e, persist, chat e2e) on
-  every push/PR (Node 22). Locally: `act -j test -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-22.04`.
-- **interop.yml** — live interop on pushes to `feat/**` (or manual dispatch, `live_seconds` input): a publisher daemon seeds the repo bundle for the live window and re-announces it on the real `gnostr` topic every 15s; an independent second node fetches by CID (bitswap) and by name (topic discovery); the real `git-remote-gnostr` helper from helia-ipfs-relay clones `gnostr://cid/<CID>` with plain git. Locally reproducible via `npm run interop:publisher` / `npm run interop:fetch` (see file headers).
+- **ci.yml** — `npm ci` + full `npm test` (smoke, MCP e2e, persist, chat e2e,
+  git-remote e2e, web e2e) on every push/PR (Node 22). Locally:
+  `act -j test -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-22.04`.
+- **interop.yml** — live interop on the real `gnostr` topic, `workflow_dispatch`
+  only. Inputs: `ref` (branch/tag, default master), `live_seconds` (publisher
+  seed window), and per-OS selects — `linux` (default; also runs the Docker peer
+  leg), `windows`, `macos`. A publisher daemon seeds the repo bundle and
+  re-announces it every 15s; an independent fetcher node proves the bundle by CID
+  (bitswap) and by name (topic discovery); on linux a Docker container joins as a
+  third independent peer (fetch by CID/name + container-side
+  `git clone gnostr://<name>` with this repo's helper). Locally reproducible via
+  `npm run interop:publisher` / `npm run interop:fetch` (see file headers), or
+  watch the live topic with `node scripts/listen-gnostr.mjs` (`GNOSTR_TOPIC`,
+  `LISTENER_REPO`).
+- **docker.yml** — image build on PRs; build + GHCR publish on push to master.
+- **release.yml** — tag push (`v*`) → GitHub release with the bundle.
+- **deploy-gh-pages.yml** — pins the built web app and deploys the IPFS site.
