@@ -53,6 +53,9 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   mv /tmp/x-graft/.git "$REPO/.git"
   rm -rf /tmp/x-graft
 fi
+# graft clones over https (no key in a fresh sandbox) — switch to the SSH
+# remote so pushes use the persistent key from the first commit onward
+git remote set-url origin git@github.com:RandyMcMillan/ipfs-agentd.git 2>/dev/null || true
 git fetch origin 2>/dev/null || true
 # a graft-time reset discards uncommitted work — keep a recoverable patch
 if ! git diff --quiet 2>/dev/null; then
