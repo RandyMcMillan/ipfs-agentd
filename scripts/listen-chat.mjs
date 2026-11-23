@@ -1,14 +1,30 @@
 #!/usr/bin/env node
-/* listen-chat.mjs — witness node for the Copilot chat interop leg (PoC).
+/* listen-chat.mjs — witness for the Copilot chat interop leg.
  *
- * Subscribes to CHAT_TOPIC and waits for one chat envelope from CHAT_FROM
- * whose text contains CHAT_NEEDLE. Exits 0 the moment it arrives (printing
- * the envelope), 1 on timeout. CHAT_DIAL (optional multiaddr, repeated every
- * 5s) lets the witness reach a publisher on a deterministic address — public-
- * swarm mesh formation alone is probabilistic (see the fetch-by-name retry in
- * test/interop-fetch.mjs), so an explicit dial makes the witness reliable.
+ * Two modes:
+ *  - CHAT_NEEDLE set, CHAT_QUESTION_MARKER unset: pass when any chat
+ *    envelope from CHAT_FROM whose text contains CHAT_NEEDLE is seen.
+ *  - CHAT_QUESTION_MARKER set (Q&A mode): pass when (1) a chat envelope
+ *    from CHAT_FROM containing the marker (the question) and (2) an answer
+ *    envelope from a name starting with CHAT_ANSWER_PREFIX whose text also
+ *    contains the marker are BOTH seen, and they came from DIFFERENT
+ *    libp2p peer ids — proving the answer came from another live instance
+ *    (a matrix-leg responder), not from the asker itself.
+ *
+ * Transport:
+ *  - CHAT_DIAL is a comma-separated list of multiaddrs dialed up-front (and
+ *    retried every 5s) so the witness reliably meshes with both sides.
+ *  - CHAT_PUBLISHER_PREFIX makes the witness watch for THIS RUN's git ads
+ *    on the topic (ipfs-agentd-ci-<run_id>-<os>, re-published every 15s by
+ *    each matrix leg) and dial their advertised multiaddrs — the
+ *    deterministic bridge to the matrix runners, which live on other
+ *    machines (each leg's responder bootstraps to its local publisher, so
+ *    witness↔publisher↔responder chains the topic).
+ *  - After seeing the question, the witness also relays it 6× (10s apart)
+ *    with its own relay multiaddrs attached ("witness-dial") as a fallback
+ *    path for any responder that did not get bootstrapped.
  */
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { multiaddr } from '@multiformats/multiaddr'
@@ -16,38 +32,135 @@ import { createAgentNode } from '../src/node.js'
 
 const topic = process.env.CHAT_TOPIC || 'gnostr'
 const from = process.env.CHAT_FROM || 'copilot'
-const needle = process.env.CHAT_NEEDLE || 'interop-ok'
-const dial = process.env.CHAT_DIAL || ''
-const timeoutMs = Number(process.env.CHAT_TIMEOUT_MS || 300000)
-const log = (m) => process.stderr.write('witness: ' + m + '\n')
+const needle = process.env.CHAT_NEEDLE || ''
+const marker = process.env.CHAT_QUESTION_MARKER || ''
+const answerPrefix = process.env.CHAT_ANSWER_PREFIX || 'responder-'
+const publisherPrefix = process.env.CHAT_PUBLISHER_PREFIX || ''
+const timeoutMs = Number(process.env.CHAT_TIMEOUT_MS || 10 * 60 * 1000)
+const dials = (process.env.CHAT_DIAL || '').split(',').map((s) => s.trim()).filter(Boolean)
 
-let done = false
-const ctx = await createAgentNode({ repoPath: mkdtempSync(join(tmpdir(), 'witness-')), log })
+const log = (m) => process.stderr.write('witness: ' + m + '\n')
+const ctx = await createAgentNode({ repoPath: mkdtempSync(join(tmpdir(), 'chat-witness-')), log })
 ctx.node.services.pubsub.subscribe(topic)
+/* CHAT_ADDRS_FILE: record our dialable relay addrs (comma-separated) as soon
+ * as they exist — the workflow uploads the file as a run artifact so matrix
+ * legs on OTHER runners can dial us directly (the public gnostr mesh alone
+ * does not reliably deliver between arbitrary runners). */
+const addrsFile = process.env.CHAT_ADDRS_FILE || ''
+if (addrsFile) {
+  const tick = setInterval(() => {
+    const addrs = ctx.node.getMultiaddrs().map(String).filter((a) => a.includes('/p2p-circuit'))
+    if (addrs.length) {
+      try { writeFileSync(addrsFile, addrs.join(',')) } catch { return }
+      log('wrote relay addrs for the chat bridge (' + addrs.length + ' addrs)')
+      clearInterval(tick)
+    }
+  }, 2000)
+  tick.unref?.()
+}
+if (dials.length) {
+  const dialAll = () => dials.forEach((d) => {
+    ctx.node.dial(multiaddr(d)).catch(() => {})
+  })
+  dialAll()
+  setInterval(dialAll, 5000).unref()
+}
+
+let saw = null       /* single-envelope mode: the envelope */
+let question = null  /* Q&A mode: { msg, fromPeer } */
+let answer = null    /* Q&A mode: { msg, fromPeer } */
+
+/* The witness swims in a churny public swarm (hundreds of connections); the
+ * default connection manager prunes UNTAGGED connections first, and our
+ * important relayed links (copilot's node, matrix-leg responders) carry no
+ * tags — they get pruned within seconds of forming. Tag every peer that is
+ * in our gnostr topic so the bridge connections survive. */
+setInterval(() => {
+  for (const p of ctx.node.services.pubsub.getPeers()) {
+    try { ctx.node.tagPeer(p, 'gnostr-topic', { value: 1000, ttl: 25000 }) } catch { /* peer gone */ }
+  }
+}, 8000).unref?.()
+
+const enc = new TextDecoder()
+const out = new TextEncoder()
+let relayed = 0
 ctx.node.services.pubsub.addEventListener('message', (evt) => {
-  if (evt.detail.topic !== topic || done) return
+  if (evt.detail.topic !== topic) return
   let msg
-  try { msg = JSON.parse(new TextDecoder().decode(evt.detail.data)) } catch { return }
-  if (msg.type !== 'chat' || msg.name !== from) return
-  log('chat from ' + msg.name + ': ' + msg.text)
-  if (!String(msg.text).includes(needle)) return
-  done = true
-  console.log('WITNESS PASS: envelope from "' + from + '" on "' + topic + '" contains "' + needle + '"')
+  try { msg = JSON.parse(enc.decode(evt.detail.data)) } catch { return }
+  /* git ads from THIS RUN's matrix publishers: dial their advertised addrs */
+  if (msg.type === 'git') {
+    if (publisherPrefix && String(msg.name).startsWith(publisherPrefix) && Array.isArray(msg.addrs)) {
+      for (const a of msg.addrs) {
+        if (typeof a === 'string' && a.startsWith('/') && !dials.includes(a)) {
+          dials.push(a)
+          log('git ad from ' + msg.name + ' — added dial target ' + a.slice(0, 70) + '…')
+        }
+      }
+    }
+    return
+  }
+  if (msg.type !== 'chat') return
+  const fromPeer = evt.detail.from?.toString() || 'unknown'
+  if (marker) {
+    if (typeof msg.text !== 'string' || !msg.text.includes(marker)) return
+    if (msg.name === from && !question) {
+      question = { msg, fromPeer }
+      log('QUESTION from ' + from + ' (peer ' + fromPeer.slice(0, 12) + '…): ' + msg.text.slice(0, 120))
+      /* relay 10× (10s apart) with OUR dialable relay addrs attached: any
+       * responder that catches one can dial back directly. Relay circuits
+       * are short-lived (~1 min) and re-dial-prone, so one shot is not
+       * enough — the responder re-dials on its side too. */
+      const addrs = ctx.node.getMultiaddrs().map(String).filter((a) => a.includes('/p2p-circuit'))
+      log('witness relay addrs: ' + (addrs.join(' ') || '(none)'))
+      for (const d of [10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]) {
+        setTimeout(() => {
+          if (done) return
+          const relayMsg = { type: 'chat', name: 'witness', at: Date.now(),
+            text: marker + ' witness-dial ' + addrs.join(' ') }
+          ctx.node.services.pubsub.publish(topic, out.encode(JSON.stringify(relayMsg))).then(
+            () => log('relayed the question with dial addrs (' + (++relayed) + '/10)'),
+            (e) => log('relay failed: ' + e.message))
+        }, d).unref?.()
+      }
+    } else if (String(msg.name).startsWith(answerPrefix) && !answer) {
+      answer = { msg, fromPeer }
+      log('ANSWER from ' + msg.name + ' (peer ' + fromPeer.slice(0, 12) + '…): ' + msg.text.slice(0, 160))
+    }
+    if (question && answer && question.fromPeer !== answer.fromPeer) {
+      pass('witness heard the question AND a real answer from a different peer (' + answer.msg.name + ')')
+    }
+  } else if (!saw && msg.name === from && msg.text && msg.text.includes(needle)) {
+    saw = { msg, fromPeer }
+    log('heard envelope from ' + from + ' (peer ' + fromPeer.slice(0, 12) + '…): ' + msg.text.slice(0, 120))
+    pass('witness received ' + from + '\'s envelope on ' + topic)
+  }
 })
 
-if (dial) {
-  ctx.node.dial(multiaddr(dial)).catch(() => { /* publisher not up yet — retried below */ })
-  const dialer = setInterval(() => {
-    if (done) return
-    ctx.node.dial(multiaddr(dial)).catch(() => {})
-  }, 5000)
-  dialer.unref()
+let done = false
+async function pass (why) {
+  if (done) return
+  done = true
+  console.log('WITNESS PASS: ' + why)
+  if (marker && question && answer) {
+    console.log('QUESTION: ' + question.msg.text)
+    console.log('ANSWER:   ' + answer.msg.text + '  [peer ' + answer.fromPeer.slice(0, 16) + '…]')
+  }
+  await ctx.helia.stop()
+  process.exit(0)
 }
-
-const deadline = Date.now() + timeoutMs
-while (!done && Date.now() < deadline) await new Promise((r) => setTimeout(r, 2000))
-await ctx.helia.stop().catch(() => {})
-if (!done) {
-  console.log('WITNESS FAIL: no envelope from "' + from + '" containing "' + needle + '" within ' + timeoutMs + 'ms')
+function fail (why) {
+  if (done) return
+  done = true
+  console.error('WITNESS FAIL: ' + why)
+  if (marker) {
+    if (!question) console.error('  never saw a question from ' + from + ' containing "' + marker + '"')
+    if (!answer) console.error('  never saw an answer from ' + answerPrefix + '* containing "' + marker + '"')
+    if (question && answer && question.fromPeer === answer.fromPeer)
+      console.error('  question and answer came from the SAME peer — not a real cross-instance answer')
+  } else {
+    console.error('  never heard an envelope from ' + from + ' containing "' + needle + '"')
+  }
   process.exit(1)
 }
+setTimeout(() => fail('timed out after ' + timeoutMs + 'ms'), timeoutMs)

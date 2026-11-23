@@ -222,7 +222,24 @@ URLs rendered).
   `git clone gnostr://<name>` with this repo's helper). Locally reproducible via
   `npm run interop:publisher` / `npm run interop:fetch` (see file headers), or
   watch the live topic with `node scripts/listen-gnostr.mjs` (`GNOSTR_TOPIC`,
-  `LISTENER_REPO`).
+  `LISTENER_REPO`). Also on every dispatch, independent of the matrix:
+  - **deployed-site** — probes the deployed gh-pages app (HTTPS + manifest
+    hard checks; swarm stat/cat soft probe) and boots the in-browser Helia
+    peer headlessly (`scripts/check-deployed-site.mjs`,
+    `scripts/check-deployed-peer.mjs`, playwright chromium).
+  - **copilot-chat** (non-fatal PoC) — GitHub Copilot CLI gets only a hint,
+    must figure out the gossipsub chat from the repo, ASK a question on the
+    live topic and receive a REAL answer from another instance. Every matrix
+    leg runs `scripts/chat-responder.mjs`, which answers envelopes matching a
+    run-scoped marker with facts only that node knows (platform/arch/hostname/
+    peer id). The witness (`scripts/listen-chat.mjs`) passes only if it sees
+    BOTH the question and a `responder-*` answer from a DIFFERENT libp2p peer.
+    Cross-runner bridge: the witness uploads its relay addrs as a run artifact
+    (`chat-bridge-<run_id>`); each leg polls for it and the responder dials
+    them (the public gnostr mesh alone does not reliably deliver between
+    arbitrary runners, and relay circuits are short-lived — everything
+    re-dials/relays at 10s cadence). Select ≥2 OSes for a true cross-OS
+    answer; the responder's platform appears in its answer text.
 - **docker.yml** — image build on PRs; build + GHCR publish on push to master.
 - **release.yml** — tag push (`v*`) → GitHub release with the bundle.
 - **deploy-gh-pages.yml** — pins the built web app and deploys the IPFS site.

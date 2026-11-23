@@ -67,6 +67,9 @@ jobs:
   live-interop:
     needs: matrix
     if: needs.matrix.outputs.include != '[]'
+    permissions:
+      contents: read
+      actions: read   # gh run download — fetch the copilot-chat bridge artifact
     strategy:
       fail-fast: false
       matrix:
@@ -124,6 +127,37 @@ jobs:
           CID=$(cat "$INTEROP_OUT/cid"); PEER=$(cat "$INTEROP_OUT/peer"); NAME=$(cat "$INTEROP_OUT/name")
           echo "CID=$CID" >> "$GITHUB_ENV"; echo "PEER=$PEER" >> "$GITHUB_ENV"; echo "NAME=$NAME" >> "$GITHUB_ENV"
           echo "publisher ready: name=$NAME cid=$CID peer=$PEER"
+
+          # chat responder: every matrix instance runs one, answering chat
+          # envelopes whose text contains this run's question marker. The
+          # copilot-chat leg (another runner) asks; the responder's answer
+          # carries its real platform/hostname/peer id — knowledge the
+          # asker cannot fabricate. Bridge: the copilot-chat witness uploads
+          # its relay addrs as a run artifact; we poll for it and add them
+          # to the responder's bootstrap (alongside this leg's publisher),
+          # because the public gnostr mesh alone does not reliably deliver
+          # between arbitrary runners.
+          BRIDGE="$INTEROP_OUT/bridge"
+          for i in $(seq 1 90); do
+            if gh run download "${{ github.run_id }}" -n "chat-bridge-${{ github.run_id }}" -D "$BRIDGE" 2>/dev/null \
+               && [ -s "$BRIDGE/chat-addrs" ]; then
+              echo "chat bridge: got the witness's relay addrs"
+              break
+            fi
+            sleep 5
+          done
+          [ -s "$BRIDGE/chat-addrs" ] || echo "::warning::chat bridge artifact never appeared — public-swarm fallback only"
+          RESP_BOOT="/ip4/127.0.0.1/tcp/4011/p2p/$PEER"
+          if [ -s "$BRIDGE/chat-addrs" ]; then RESP_BOOT="$RESP_BOOT,$(cat "$BRIDGE/chat-addrs")"; fi
+          printf '/ip4/127.0.0.1/tcp/4013' > "$INTEROP_OUT/responder-listen"
+          printf '%s' "$RESP_BOOT" > "$INTEROP_OUT/responder-bootstrap"
+          INTEROP_TOPIC=gnostr \
+          INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }} \
+          GNOSTR_LISTEN_FILE="$INTEROP_OUT/responder-listen" GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4013 \
+          GNOSTR_BOOTSTRAP_FILE="$INTEROP_OUT/responder-bootstrap" \
+          INTEROP_LIVE_SECS=${{ env.INTEROP_LIVE_SECS }} \
+          node scripts/chat-responder.mjs 2>"$INTEROP_OUT/responder.log" &
+          echo "responder pid $! (log: $INTEROP_OUT/responder.log)"
 
           echo '::group::cross-daemon fetch (bitswap by CID + topic discovery by name)'
           printf '/ip4/127.0.0.1/tcp/4011/p2p/%s' "$PEER" > "$INTEROP_OUT/bootstrap"
@@ -275,11 +309,21 @@ jobs:
           SITE_URL: https://randymcmillan.github.io/ipfs-agentd
 
   # Proof of concept: can an AI agent with NO prior knowledge of this repo
-  # figure out its gossipsub chat and be HEARD on the live "gnostr" topic?
-  # GitHub Copilot CLI gets only a hint (read the repo, meet the requirements);
-  # our witness node (scripts/listen-chat.mjs) must then receive a valid chat
-  # envelope from it. NON-FATAL: the step reports an orange check on failure
-  # (continue-on-error) — the job never goes red for a Copilot hiccup.
+  # figure out its gossipsub chat, ASK a question on the live "gnostr" topic
+  # and receive a REAL answer from another instance? Every live-interop matrix
+  # leg runs scripts/chat-responder.mjs, which answers chat envelopes whose
+  # text contains this run's marker with facts only that live node knows
+  # (platform, arch, hostname, peer id). GitHub Copilot CLI gets only a hint
+  # (read the repo, meet the requirements); our witness node
+  # (scripts/listen-chat.mjs) must then receive BOTH the copilot's question
+  # AND a responder-* answer — from a DIFFERENT libp2p peer. Bridge: the
+  # witness uploads its relay multiaddrs as a run artifact (chat-bridge-<id>)
+  # and each matrix leg's responder dials them directly — the public gnostr
+  # mesh alone does not reliably deliver between arbitrary runners. Select
+  # ≥2 OSes for a true cross-OS answer (the responder's platform is in its
+  # answer text, surfaced in the job summary). NON-FATAL: the step reports
+  # an orange check on failure (continue-on-error) — the job never goes red
+  # for a Copilot hiccup.
   # Local listening during a dispatch:
   #   CHAT_TOPIC=gnostr node scripts/listen-chat.mjs
   # Copilot auth: GITHUB_TOKEN + copilot-requests: write (org policy must
@@ -315,46 +359,68 @@ jobs:
       - name: Install Copilot CLI
         run: npm install -g @github/copilot && copilot --version
 
-      - name: Copilot must figure out the gnostr chat — witness verifies
+      - name: Start chat witness (detached) and record bridge addrs
+        run: |
+          set -u
+          CHAT_TOPIC=gnostr CHAT_FROM=copilot \
+            CHAT_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }} \
+            CHAT_ANSWER_PREFIX=responder- \
+            CHAT_PUBLISHER_PREFIX=ipfs-agentd-ci-${{ github.run_id }}- \
+            CHAT_DIAL=/ip4/127.0.0.1/tcp/4012 CHAT_TIMEOUT_MS=480000 \
+            CHAT_ADDRS_FILE="$RUNNER_TEMP/chat-addrs" \
+            node scripts/listen-chat.mjs >"$RUNNER_TEMP/witness.out" 2>"$RUNNER_TEMP/witness.log" &
+          echo $! > "$RUNNER_TEMP/witness.pid"
+          for i in $(seq 1 60); do [ -s "$RUNNER_TEMP/chat-addrs" ] && break; sleep 3; done
+          [ -s "$RUNNER_TEMP/chat-addrs" ] && echo "witness up — bridge addrs recorded" \
+            || echo "::warning::witness relay addrs never landed (bridge upload will fail)"
+
+      - name: Upload chat bridge addrs (artifact for the matrix legs)
+        if: always()
+        continue-on-error: true   # bridge is best-effort; legs fall back
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-bridge-${{ github.run_id }}
+          path: ${{ runner.temp }}/chat-addrs
+
+      - name: Copilot must figure out the gnostr chat AND get a real answer
         timeout-minutes: 12
         continue-on-error: true   # PoC: orange on failure, never red
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -u
-          # witness first: subscribes to the real gnostr topic and dials
-          # 127.0.0.1:4012 (the hint makes Copilot's node listen there, so
-          # mesh formation is deterministic instead of swarm-luck)
-          CHAT_TOPIC=gnostr CHAT_FROM=copilot CHAT_NEEDLE=interop-ok \
-            CHAT_DIAL=/ip4/127.0.0.1/tcp/4012 CHAT_TIMEOUT_MS=480000 \
-            node scripts/listen-chat.mjs 2>"$RUNNER_TEMP/witness.log" &
-          WITNESS=$!
-
-          cat > "$RUNNER_TEMP/hint.md" <<'HINT'
+          cat > "$RUNNER_TEMP/hint.md" <<HINT
           You are an autonomous agent on a CI runner for the ipfs-agentd repo
-          (checked out at $GITHUB_WORKSPACE). Your task: make a chat message
-          from you appear on the LIVE IPFS gossipsub topic "gnostr", read by a
-          witness node that is already subscribed.
+          (checked out at $GITHUB_WORKSPACE). Your task: ask a question on the
+          LIVE IPFS gossipsub topic "gnostr" and receive a REAL answer from
+          another live node — a "responder" run by this project's CI on
+          another runner (possibly a different OS).
 
           Everything you need to know is IN THIS REPO. Read README.md (the
           "Chat CLI" and "Env" sections) and AGENTS.md before running anything.
 
-          The witness only counts a message that meets ALL of:
-            1. it is published on the "gnostr" topic
-            2. it is a JSON chat envelope in this repo's format, with
-               "name": "copilot"
-            3. "text" contains "interop-ok"
-            4. your sending node listens on /ip4/127.0.0.1/tcp/4012 (use the
+          The witness on this runner only counts an exchange that meets ALL of:
+            1. your question is published on the "gnostr" topic as a JSON chat
+               envelope in this repo's format, with "name": "copilot"
+            2. its "text" contains "gnostr-interop-question-${{ github.run_id }}"
+               and asks something only another live node can answer — e.g.
+               what platform/architecture and hostname it runs on
+            3. your sending node listens on /ip4/127.0.0.1/tcp/4012 (use the
                GNOSTR_LISTEN env var) so the witness can dial it
-            5. the line is sent only AFTER your chat process has been on the
-               topic for at least 20 seconds (gossipsub needs time to graft a
-               mesh — a message published too early reaches no one), and the
-               sender then stays alive for at least 30 more seconds
+            4. the question is sent only AFTER your chat process has been on
+               the topic for at least 20 seconds (gossipsub needs time to
+               graft a mesh — a message published too early reaches no one)
+            5. after sending, keep your node alive and listening for at least
+               90 more seconds. A responder will answer on the same topic with
+               "name" starting "responder-". Copy the FULL text of the FIRST
+               responder envelope you see into your final report verbatim —
+               that text is the real cross-instance answer.
 
           You may see unrelated traffic on the topic — this repo's own CI
-          publishes git ads here. Ignore anything that is not your chat
-          message. Do not modify repo files. When done, report the exact
-          commands you ran.
+          publishes git ads here, and the witness relays your question.
+          Ignore anything that is not your chat question or a responder
+          answer. Do not modify repo files. When done, report the exact
+          commands you ran and the responder's answer text.
           HINT
 
           copilot --yolo --max-ai-credits 50 -p "$(cat "$RUNNER_TEMP/hint.md")" \
@@ -362,14 +428,23 @@ jobs:
             || echo "::warning::copilot CLI exited $? (auth/policy? see copilot.log)"
 
           echo "waiting for the witness verdict…"
-          if wait "$WITNESS"; then
-            echo "::notice::COPILOT CHAT INTEROP PASS — witness received copilot's envelope on gnostr"
+          VERDICT=""
+          for i in $(seq 1 150); do
+            if grep -q "WITNESS PASS" "$RUNNER_TEMP/witness.out" 2>/dev/null; then VERDICT=pass; break; fi
+            if grep -q "WITNESS FAIL" "$RUNNER_TEMP/witness.out" 2>/dev/null; then VERDICT=fail; break; fi
+            sleep 4
+          done
+          if [ "$VERDICT" = "pass" ]; then
+            echo "::notice::COPILOT CHAT INTEROP PASS — copilot's question got a real answer from another instance"
             echo "### Copilot chat interop — PASS" >> "$GITHUB_STEP_SUMMARY"
-            echo "Witness received a \`copilot\` chat envelope containing \`interop-ok\` on the live gnostr topic." >> "$GITHUB_STEP_SUMMARY"
+            echo "The witness received Copilot's question AND a \`responder-*\` answer containing the run marker from a **different libp2p peer** on the live gnostr topic." >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E 'witness: (QUESTION|ANSWER) from' "$RUNNER_TEMP/witness.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning::COPILOT CHAT INTEROP FAIL — witness heard nothing (see witness.log / copilot.log)"
+            echo "::warning::COPILOT CHAT INTEROP FAIL — witness saw no valid Q&A (see witness.log / copilot.log)"
             echo "### Copilot chat interop — FAIL (non-fatal PoC)" >> "$GITHUB_STEP_SUMMARY"
-            echo 'The witness received no qualifying envelope. Tail of witness.log:' >> "$GITHUB_STEP_SUMMARY"
+            echo 'The witness received no qualifying question+answer pair. Tail of witness.log:' >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/witness.log" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
