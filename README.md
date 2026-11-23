@@ -212,7 +212,9 @@ URLs rendered).
   only. Inputs: `ref` (branch/tag, default master), `live_seconds` (publisher
   seed window), per-OS selects — `linux` (default; also runs the Docker peer
   leg), `windows`, `macos` — and the model-beam inputs `copilot` (default
-  off), `opencode_model`, `opencode_models`, `opencode_free` (see below). A publisher daemon seeds the repo bundle and
+  off), `opencode_model`, `opencode_models`, `opencode_free`, `verbose`
+  (streams the agents' full chat — thinking + logs — into the job log and
+  step summary; see below). A publisher daemon seeds the repo bundle and
   re-announces it every 15s; an independent fetcher node proves the bundle by CID
   (bitswap) and by name (topic discovery); on linux a Docker container joins as a
   third independent peer (fetch by CID/name + container-side
