@@ -8,6 +8,10 @@ runs:
   using: composite
   steps:
     - uses: actions/checkout@v4
+      with:
+        # smoke publishes the repo itself — a depth-1 checkout is shallow and
+        # git_publish_repo refuses it (bundle would miss parents)
+        fetch-depth: 0
     # .nvmrc stays the single source for the version; setup-node is the
     # battle-tested path (install-nvm's curl|bash bootstrap became a
     # fast-fail source on hosted runners)
