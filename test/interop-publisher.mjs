@@ -26,6 +26,15 @@ const log = (m) => process.stderr.write('publisher: ' + m + '\n')
 
 const ctx = await createAgentNode({ repoPath: join(outDir, 'publisher-store'), log })
 
+/* SUBSCRIBE before publishing — publish() goes through the fanout path for
+ * topics we don't subscribe to, and fanout is sampled ONCE from known topic
+ * peers, refreshed only after fanoutTTL (60s) of publish silence. We re-announce
+ * every INTEROP_AD_SECS (15s), so the fanout never refreshes — and on the public
+ * swarm its first sample fills with OTHER gnostr subscribers, meaning a fetcher
+ * that subscribes later (every interop fetcher!) never hears the ad. Mesh-based
+ * publishing grafts new topic peers every heartbeat instead. */
+ctx.node.services.pubsub.subscribe(topic)
+
 /* if we have no public listener, wait for a relay reservation so external peers
  * can actually dial us — readiness (and the notice below) must not race it */
 if (!process.env.GNOSTR_LISTEN) {
