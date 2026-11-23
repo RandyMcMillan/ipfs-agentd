@@ -68,9 +68,12 @@ export async function chatMain (argv = []) {
     const text = line.trim()
     if (text.length > 0) {
       const msg = enc.encode(JSON.stringify({ type: 'chat', name, text, at: Date.now() }))
-      ctx.node.services.pubsub.publish(topic, msg).catch((err) => {
-        process.stderr.write('publish failed: ' + (err?.message || err) + '\n')
-      })
+      ctx.node.services.pubsub.publish(topic, msg).then(
+        /* local echo — a chat driver (human or agent) cannot otherwise tell
+         * the line actually went out: receipt is not guaranteed and the
+         * outbound envelope looks like any other traffic on a busy topic. */
+        () => process.stdout.write('you: ' + text + '\n'),
+        (err) => process.stderr.write('publish failed: ' + (err?.message || err) + '\n'))
     }
     rl.prompt()
   })
