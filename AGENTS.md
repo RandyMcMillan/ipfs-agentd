@@ -238,6 +238,15 @@ Workflows:
   (witness relays ×10, responder re-dials, answers ×12) runs at 10s cadence,
   and both sides `tagPeer` their topic peers or the connection managers prune
   the bridge links within seconds.
+  Local observation: `scripts/local-observe.sh [start|stop|status|tail]`
+  runs a supervised fleet (git-ad listener, a CHAT_NEEDLE observer that
+  prints every run-marked question/answer verbatim, and a chat-responder
+  that answers ANY run's question from your peer — `RESPONDER=0` for
+  watch-only) with logs in `$IPFS_OBSERVE_DIR/logs` (default
+  `~/.ipfs-agentd-observe`). Requires node >= 22 (`NODE=/path/to/node-22`
+  if `node` is older — node 20 crashes undici zstd). Env assignments in
+  `svc_launch` must precede the command (`env` semantics) — after it they
+  become argv, and the scripts read `process.env`.
   Both model legs PREFLIGHT before starting the witness: opencode legs probe
   the provider HTTP API (key/quota) then `opencode run` the exact model id
   (retried ×2 — GitHub flakes); copilot legs check the CLI runs (a real auth
