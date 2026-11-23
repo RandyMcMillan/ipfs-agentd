@@ -195,7 +195,8 @@ Workflows:
 - `interop.yml` — live interop on the real gnostr topic, `workflow_dispatch`
   only. Inputs: `ref` (branch/tag, default master), `live_seconds` (publisher
   seed window), per-OS selects (`linux` default — also runs the Docker peer leg,
-  `windows`, `macos`), `opencode_model` (model beam, below). A publisher daemon seeds and re-announces every 15s; an
+  `windows`, `macos`), and the model-beam inputs `copilot` (PAID, default off),
+  `opencode_model`, `opencode_models`, `opencode_free` (below). A publisher daemon seeds and re-announces every 15s; an
   independent fetcher node proves the bundle by CID (bitswap) and by name
   (topic discovery); on linux a Docker container joins as a third independent
   peer (CID/name fetch + container-side `git clone gnostr://<name>` with this
@@ -213,13 +214,22 @@ Workflows:
   ask a run-marked question on gnostr and receive a REAL answer from a matrix
   leg's `scripts/chat-responder.mjs`; the witness `scripts/listen-chat.mjs`
   passes only on question + `responder-*` answer from DIFFERENT libp2p peers).
-  The beam has two legs: **copilot-chat** (Copilot CLI) and **opencode-chat**
-  (OpenCode CLI, authed with the repo `OPENCODE` secret exposed to the step as
-  `OPENCODE_API_KEY`; its marker/artifact are `-opencode`-suffixed and its
-  listen port is 4017 — set `opencode_model` at dispatch for a provider/model).
+  The beam: **copilot-chat** (Copilot CLI — PAID, `if: inputs.copilot`,
+  default off; seat required, ~50 free premium req/month) and
+  **opencode-chat** (OpenCode CLI, free-first — a dynamic matrix from the
+  **opencode-catalog** job: `opencode_models` list > `opencode_model` single
+  > `opencode_free` live `opencode models | grep -i free` query, first 3 —
+  the free list rotates, never hardcode it; the dispatch dropdown can't be
+  populated from a query). Auth: the repo `OPENCODE` secret is exposed as
+  `OPENCODE_API_KEY`, `OPENROUTER_API_KEY` AND `GEMINI_API_KEY` — OpenRouter
+  `:free` key (50/day, 1k after a one-time $10), Gemini AI Studio key
+  (~1,500/day), or Zen (no key). Each leg's marker/artifact are
+  `-opencode-<model-slug>`-suffixed (slugged because artifact names reject
+  `:` — OpenRouter free ids end in `:free`); listen port 4017 is per-runner.
   Cross-runner transport for the answer: each leg's witness uploads its relay
-  addrs as a `chat-bridge-<run_id>[-opencode]` artifact; legs poll
-  `gh run download` for BOTH and the responder dials them. Do NOT rely on the public gnostr mesh to deliver
+  addrs as a `chat-bridge-<run_id>[-suffix]` artifact; a background writer in
+  live-interop polls the run's artifact LIST (dynamic legs) and keeps
+  refreshing the responder's bootstrap file (re-read every 30s). Do NOT rely on the public gnostr mesh to deliver
   between arbitrary runners — locally it carried zero envelopes in 90s.
   Relay circuits are short-lived (~1 min) and re-dial-prone: everything
   (witness relays ×10, responder re-dials, answers ×12) runs at 10s cadence,

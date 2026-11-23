@@ -33,9 +33,42 @@ on:
         description: 'Run on macos-latest'
         type: boolean
         default: false
+      # --- model beam (copilot-chat + opencode-chat legs) -----------------------
+      # copilot is PAID -> DEFAULT OFF (opt in with `copilot`). The opencode leg
+      # is free-first; precedence: opencode_models (list) > opencode_model
+      # (single) > opencode_free live catalog query (`opencode models |
+      # grep -i free`, first 3 — the free list rotates weekly, never hardcode
+      # it). The dispatch dropdown itself CANNOT be populated from a query;
+      # the catalog job below does it in-workflow and feeds a dynamic matrix.
+      #
+      # How to fill the OPENCODE repo secret (Settings -> Secrets and variables
+      # -> Actions -> New repository secret):
+      #   * OpenRouter free models — https://openrouter.ai/keys, free key, no
+      #     card; IDs ending :free are $0 (50 req/day, 1,000/day after a
+      #     one-time $10 top-up), or `openrouter/free` auto-router. The step
+      #     exposes the secret as OPENROUTER_API_KEY — no config edit needed.
+      #   * Google Gemini free tier — https://aistudio.google.com, free key,
+      #     ~1,500 requests/day; exposed as GEMINI_API_KEY / GOOGLE_API_KEY.
+      #   * OpenCode Zen free models — no key: run `opencode auth login` once
+      #     anywhere; the catalog query picks up whatever is tagged free
+      #     today. (Fine print: free-tier prompts may train the models.)
+      # The run step exposes the SAME secret as OPENCODE_API_KEY,
+      # OPENROUTER_API_KEY and GEMINI_API_KEY so any of the above just works;
+      # if your provider wants another name (GROQ_API_KEY, ...), add it there.
+      copilot:
+        description: 'Model beam: Copilot leg (PAID -- needs a Copilot seat; free tier ~50 premium req/month)'
+        type: boolean
+        default: false
       opencode_model:
-        description: 'OpenCode leg: model (provider/model, e.g. anthropic/claude-sonnet-5-5); empty = opencode default'
+        description: 'OpenCode leg: ONE model (provider/model, e.g. google/gemini-3.5-flash); empty + free on = live free-catalog matrix'
         default: ''
+      opencode_models:
+        description: 'OpenCode leg: MULTI-model matrix (comma-separated provider/model list; overrides opencode_model)'
+        default: ''
+      opencode_free:
+        description: 'OpenCode leg: no explicit model -> query the live catalog for FREE models and matrix over them'
+        type: boolean
+        default: true
 
 env:
   INTEROP_LIVE_SECS: ${{ github.event.inputs.live_seconds || '900' }}
@@ -133,30 +166,35 @@ jobs:
 
           # chat responder: every matrix instance runs one, answering chat
           # envelopes whose text contains a run-scoped question marker (one
-          # per model leg: copilot and opencode). The responder's answer
-          # carries its real platform/hostname/peer id — knowledge the
-          # asker cannot fabricate. Bridge: each model leg's witness uploads
-          # its relay addrs as a run artifact (chat-bridge-<run_id>[-leg]);
-          # we poll for BOTH and add them to the responder's bootstrap,
-          # because the public gnostr mesh alone does not reliably deliver
+          # per model leg — copilot and each opencode model; the responder
+          # matches the BASE marker, so every suffix matches). The responder's
+          # answer carries its real platform/hostname/peer id — knowledge the
+          # asker cannot fabricate. Bridge: EVERY model leg's witness uploads
+          # its relay addrs as a chat-bridge-<run_id>[-suffix] artifact; a
+          # background writer here polls the run's artifact list (the set of
+          # legs is dynamic — a free-catalog matrix) and keeps refreshing the
+          # responder's bootstrap file, which the responder re-reads every
+          # 30s. The public gnostr mesh alone does not reliably deliver
           # between arbitrary runners.
           BRIDGE="$INTEROP_OUT/bridge"
-          for i in $(seq 1 90); do
-            gh run download "${{ github.run_id }}" -n "chat-bridge-${{ github.run_id }}" -D "$BRIDGE/copilot" 2>/dev/null || true
-            gh run download "${{ github.run_id }}" -n "chat-bridge-${{ github.run_id }}-opencode" -D "$BRIDGE/opencode" 2>/dev/null || true
-            cat "$BRIDGE"/*/chat-addrs 2>/dev/null | tr -d '\n' | sed 's/,$//' > "$BRIDGE/all"
-            [ -s "$BRIDGE/all" ] && break
-            sleep 5
-          done
-          if [ -s "$BRIDGE/all" ]; then
-            echo "chat bridge: $(tr ',' '\n' < "$BRIDGE/all" | wc -l) witness addr(s) from $(ls -d "$BRIDGE"/*/ 2>/dev/null | wc -l) leg(s)"
-          else
-            echo "::warning::no chat bridge artifact ever appeared — public-swarm fallback only"
-          fi
-          RESP_BOOT="/ip4/127.0.0.1/tcp/4011/p2p/$PEER"
-          if [ -s "$BRIDGE/all" ]; then RESP_BOOT="$RESP_BOOT,$(cat "$BRIDGE/all")"; fi
+          ( for i in $(seq 1 30); do
+              for name in $(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --jq '.artifacts[].name' 2>/dev/null | grep "^chat-bridge-${{ github.run_id }}" || true); do
+                gh run download "${{ github.run_id }}" -n "$name" -D "$BRIDGE/$name" 2>/dev/null || true
+              done
+              MERGED=$(cat "$BRIDGE"/*/chat-addrs 2>/dev/null | tr -d '\n' | sed 's/,$//')
+              RESP_BOOT="/ip4/127.0.0.1/tcp/4011/p2p/$PEER"
+              if [ -n "$MERGED" ]; then
+                RESP_BOOT="$RESP_BOOT,$MERGED"
+                echo "chat bridge: $(echo "$MERGED" | tr ',' '\n' | wc -l) witness addr(s) from $(ls -d "$BRIDGE"/*/ 2>/dev/null | wc -l) leg(s)"
+              else
+                echo "::warning::no chat bridge artifact yet -- public-swarm fallback only (poll $i/30)"
+              fi
+              printf '%s' "$RESP_BOOT" > "$INTEROP_OUT/responder-bootstrap"
+              sleep 20
+            done ) &
+          echo "bridge writer pid $! (refreshes responder-bootstrap for ~10 min)"
           printf '/ip4/127.0.0.1/tcp/4013' > "$INTEROP_OUT/responder-listen"
-          printf '%s' "$RESP_BOOT" > "$INTEROP_OUT/responder-bootstrap"
+          printf '/ip4/127.0.0.1/tcp/4011/p2p/%s' "$PEER" > "$INTEROP_OUT/responder-bootstrap"
           INTEROP_TOPIC=gnostr \
           INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }} \
           GNOSTR_LISTEN_FILE="$INTEROP_OUT/responder-listen" GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4013 \
@@ -335,6 +373,11 @@ jobs:
   # Copilot auth: GITHUB_TOKEN + copilot-requests: write (org policy must
   # allow Copilot CLI billed to the org); --max-ai-credits bounds the cost.
   copilot-chat:
+    # PAID leg -- opt-in only (dispatch input `copilot`, default off). Needs a
+    # Copilot seat on the repo owner; the free tier is ~50 premium requests/
+    # month. GITHUB_TOKEN gets copilot-requests: write so the CLI can bill
+    # against this repo; --max-ai-credits 50 caps spend per run.
+    if: ${{ inputs.copilot == true }}
     name: Copilot chat interop (hint-driven PoC)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -457,21 +500,93 @@ jobs:
             exit 1
           fi
 
+  # OpenCode leg model resolution. The dispatch dropdown can't be populated
+  # from a live query, so this job does it in-workflow and the legs consume
+  # its output as a dynamic matrix. Precedence:
+  #   opencode_models (comma list) -> one leg per model
+  #   opencode_model  (single)     -> one leg
+  #   else opencode_free           -> `opencode models` LIVE catalog, grep -i
+  #                                   free, first 3 (the free list rotates
+  #                                   weekly -- never hardcode it)
+  #   else                         -> '[]' -> the leg job skips entirely
+  opencode-catalog:
+    name: OpenCode model catalog (resolve legs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      models: ${{ steps.resolve.outputs.models }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install OpenCode CLI
+        run: npm install -g @opencode/cli && opencode --version
+
+      - id: resolve
+        # the catalog lists more (incl. paid) models when credentials are
+        # present -- expose the OPENCODE secret under the common provider
+        # names so the free filter sees everything the key unlocks
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENCODE }}
+          GEMINI_API_KEY: ${{ secrets.OPENCODE }}
+        run: |
+          set -u
+          MODELS='${{ inputs.opencode_models }}'
+          SINGLE='${{ inputs.opencode_model }}'
+          if [ -n "$MODELS" ]; then
+            json=''; sep=''
+            IFS=','
+            for m in $MODELS; do
+              m=$(echo "$m" | tr -d ' ')
+              if [ -n "$m" ]; then json="$json$sep\"$m\""; sep=','; fi
+            done
+            unset IFS
+            echo "models=[$json]" >> "$GITHUB_OUTPUT"
+            echo "opencode legs (dispatch list): [$json]"
+          elif [ -n "$SINGLE" ]; then
+            echo "models=[\"$SINGLE\"]" >> "$GITHUB_OUTPUT"
+            echo "opencode legs (single): $SINGLE"
+          elif [ "${{ inputs.opencode_free }}" = "true" ]; then
+            free=$(opencode models 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -i free | awk '{print $1}' | head -3 || true)
+            json=''; sep=''
+            for m in $free; do json="$json$sep\"$m\""; sep=','; done
+            echo "models=[$json]" >> "$GITHUB_OUTPUT"
+            echo "opencode legs (free catalog): [${json}]"
+            [ -z "$json" ] && echo "::warning::no free models in the live catalog -- set opencode_model or the OPENCODE secret"
+          else
+            echo "models=[]" >> "$GITHUB_OUTPUT"
+            echo 'opencode legs: none (no model set, opencode_free off)'
+          fi
+
   # Second beam of the model interop PoC (copilot-chat is the first): the
-  # OpenCode CLI gets the SAME hint-driven treatment — no prior knowledge,
+  # OpenCode CLI gets the SAME hint-driven treatment -- no prior knowledge,
   # must read the repo, figure out the gossipsub chat, ask a run-marked
   # question on the live gnostr topic and receive a REAL answer from a
-  # matrix leg's responder. Its own witness + bridge artifact (suffixed
-  # -opencode), its own marker (suffixed -opencode), its own listen port
-  # (4017 — the hint puts OpenCode's node there so the witness dial is
-  # deterministic). Auth: the OPENCODE repo secret is exposed as
-  # OPENCODE_API_KEY; if the key is provider-specific (e.g. an Anthropic or
-  # OpenRouter key), pass the provider's env var name instead and set
-  # opencode_model accordingly at dispatch. NON-FATAL: orange on failure.
+  # matrix leg's responder. One job instance PER RESOLVED MODEL (dynamic
+  # matrix from opencode-catalog); each has its own witness + bridge
+  # artifact (suffixed -opencode-<model slug>), marker and listen port
+  # (4017 -- the hint puts OpenCode's node there so the witness dial is
+  # deterministic; per-runner, so matrix legs don't collide). Auth: the
+  # OPENCODE repo secret is exposed under OPENCODE_API_KEY, OPENROUTER_API_KEY
+  # and GEMINI_API_KEY -- see the `copilot` input comment for how to obtain a
+  # free key (OpenRouter :free / Gemini AI Studio / Zen). NON-FATAL: orange.
   opencode-chat:
-    name: OpenCode chat interop (hint-driven PoC)
+    needs: opencode-catalog
+    if: needs.opencode-catalog.outputs.models != '[]' && needs.opencode-catalog.outputs.models != ''
+    name: OpenCode chat interop -- ${{ matrix.model }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        model: ${{ fromJSON(needs.opencode-catalog.outputs.models) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -484,11 +599,11 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      - name: npm ci (retry — registry/GitHub flakes)
+      - name: npm ci (retry -- registry/GitHub flakes)
         run: |
           for i in 1 2 3 4 5; do
             npm ci --no-audit --no-fund && exit 0
-            echo "::warning::npm ci attempt $i failed — retrying in $((i*10))s"
+            echo "::warning::npm ci attempt $i failed -- retrying in $((i*10))s"
             sleep $((i*10))
           done
           exit 1
@@ -496,11 +611,20 @@ jobs:
       - name: Install OpenCode CLI
         run: npm install -g @opencode/cli && opencode --version
 
+      # artifact names reject ':' etc. -- slug the model id for the marker and
+      # the bridge artifact (the responder matches the base marker, so the
+      # suffix only needs to be unique per leg)
+      - name: Slug the model id
+        run: |
+          SLUG=$(echo '${{ matrix.model }}' | tr -cs 'a-zA-Z0-9._-' '-')
+          echo "slug=$SLUG" >> "$GITHUB_ENV"
+          echo "model=${{ matrix.model }} slug=$SLUG"
+
       - name: Start chat witness (detached) and record bridge addrs
         run: |
           set -u
           CHAT_TOPIC=gnostr CHAT_FROM=opencode \
-            CHAT_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-opencode \
+            CHAT_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-opencode-${{ env.slug }} \
             CHAT_ANSWER_PREFIX=responder- \
             CHAT_PUBLISHER_PREFIX=ipfs-agentd-ci-${{ github.run_id }}- \
             CHAT_DIAL=/ip4/127.0.0.1/tcp/4017 CHAT_TIMEOUT_MS=480000 \
@@ -508,7 +632,7 @@ jobs:
             node scripts/listen-chat.mjs >"$RUNNER_TEMP/witness.out" 2>"$RUNNER_TEMP/witness.log" &
           echo $! > "$RUNNER_TEMP/witness.pid"
           for i in $(seq 1 60); do [ -s "$RUNNER_TEMP/chat-addrs" ] && break; sleep 3; done
-          [ -s "$RUNNER_TEMP/chat-addrs" ] && echo "witness up — bridge addrs recorded" \
+          [ -s "$RUNNER_TEMP/chat-addrs" ] && echo "witness up -- bridge addrs recorded" \
             || echo "::warning::witness relay addrs never landed (bridge upload will fail)"
 
       - name: Upload chat bridge addrs (artifact for the matrix legs)
@@ -516,7 +640,7 @@ jobs:
         continue-on-error: true   # bridge is best-effort; legs fall back
         uses: actions/upload-artifact@v4
         with:
-          name: chat-bridge-${{ github.run_id }}-opencode
+          name: chat-bridge-${{ github.run_id }}-opencode-${{ env.slug }}
           path: ${{ runner.temp }}/chat-addrs
 
       - name: OpenCode must figure out the gnostr chat AND get a real answer
@@ -524,13 +648,15 @@ jobs:
         continue-on-error: true   # PoC: orange on failure, never red
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENCODE }}
+          GEMINI_API_KEY: ${{ secrets.OPENCODE }}
         run: |
           set -u
           cat > "$RUNNER_TEMP/hint.md" <<HINT
           You are an autonomous agent on a CI runner for the ipfs-agentd repo
           (checked out at $GITHUB_WORKSPACE). Your task: ask a question on the
           LIVE IPFS gossipsub topic "gnostr" and receive a REAL answer from
-          another live node — a "responder" run by this project's CI on
+          another live node -- a "responder" run by this project's CI on
           another runner (possibly a different OS).
 
           Everything you need to know is IN THIS REPO. Read README.md (the
@@ -539,37 +665,32 @@ jobs:
           The witness on this runner only counts an exchange that meets ALL of:
             1. your question is published on the "gnostr" topic as a JSON chat
                envelope in this repo's format, with "name": "opencode"
-            2. its "text" contains "gnostr-interop-question-${{ github.run_id }}-opencode"
-               and asks something only another live node can answer — e.g.
+            2. its "text" contains "gnostr-interop-question-${{ github.run_id }}-opencode-${{ env.slug }}"
+               and asks something only another live node can answer -- e.g.
                what platform/architecture and hostname it runs on
             3. your sending node listens on /ip4/127.0.0.1/tcp/4017 (use the
                GNOSTR_LISTEN env var) so the witness can dial it
             4. the question is sent only AFTER your chat process has been on
                the topic for at least 20 seconds (gossipsub needs time to
-               graft a mesh — a message published too early reaches no one)
+               graft a mesh -- a message published too early reaches no one)
             5. after sending, keep your node alive and listening for at least
                90 more seconds. A responder will answer on the same topic with
                "name" starting "responder-". Copy the FULL text of the FIRST
-               responder envelope you see into your final report verbatim —
+               responder envelope you see into your final report verbatim --
                that text is the real cross-instance answer.
 
-          You may see unrelated traffic on the topic — this repo's own CI
+          You may see unrelated traffic on the topic -- this repo's own CI
           publishes git ads here, and CI witnesses relay questions.
           Ignore anything that is not your chat question or a responder
           answer. Do not modify repo files. When done, report the exact
           commands you ran and the responder's answer text.
           HINT
 
-          MODEL_ARGS=""
-          if [ -n "${{ inputs.opencode_model }}" ]; then
-            MODEL_ARGS="--model ${{ inputs.opencode_model }}"
-          fi
-          # shellcheck disable=SC2086
-          opencode run --standalone $MODEL_ARGS "$(cat "$RUNNER_TEMP/hint.md")" \
+          opencode run --standalone --model "${{ matrix.model }}" "$(cat "$RUNNER_TEMP/hint.md")" \
             | tee "$RUNNER_TEMP/opencode.log" \
             || echo "::warning::opencode CLI exited $? (auth/model? see opencode.log)"
 
-          echo "waiting for the witness verdict…"
+          echo "waiting for the witness verdict..."
           VERDICT=""
           for i in $(seq 1 150); do
             if grep -q "WITNESS PASS" "$RUNNER_TEMP/witness.out" 2>/dev/null; then VERDICT=pass; break; fi
@@ -577,15 +698,15 @@ jobs:
             sleep 4
           done
           if [ "$VERDICT" = "pass" ]; then
-            echo "::notice::OPENCODE CHAT INTEROP PASS — opencode's question got a real answer from another instance"
-            echo "### OpenCode chat interop — PASS" >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::OPENCODE CHAT INTEROP PASS -- opencode (${{ matrix.model }}) got a real answer from another instance"
+            echo "### OpenCode chat interop -- ${{ matrix.model }} -- PASS" >> "$GITHUB_STEP_SUMMARY"
             echo "The witness received OpenCode's question AND a \`responder-*\` answer containing the run marker from a **different libp2p peer** on the live gnostr topic." >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             grep -E 'witness: (QUESTION|ANSWER) from' "$RUNNER_TEMP/witness.log" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning::OPENCODE CHAT INTEROP FAIL — witness saw no valid Q&A (see witness.log / opencode.log)"
-            echo "### OpenCode chat interop — FAIL (non-fatal PoC)" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::OPENCODE CHAT INTEROP FAIL -- witness saw no valid Q&A (see witness.log / opencode.log)"
+            echo "### OpenCode chat interop -- ${{ matrix.model }} -- FAIL (non-fatal PoC)" >> "$GITHUB_STEP_SUMMARY"
             echo 'The witness received no qualifying question+answer pair. Tail of witness.log:' >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/witness.log" >> "$GITHUB_STEP_SUMMARY"
