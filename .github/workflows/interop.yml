@@ -127,7 +127,7 @@ jobs:
 
           echo '::group::cross-daemon fetch (bitswap by CID + topic discovery by name)'
           printf '/ip4/127.0.0.1/tcp/4011/p2p/%s' "$PEER" > "$INTEROP_OUT/bootstrap"
-          GNOSTR_BOOTSTRAP_FILE="$INTEROP_OUT/bootstrap" INTEROP_OUT=$INTEROP_OUT node test/interop-fetch.mjs
+          GNOSTR_BOOTSTRAP_FILE="$INTEROP_OUT/bootstrap" INTEROP_PEER=$PEER INTEROP_OUT=$INTEROP_OUT node test/interop-fetch.mjs
           echo '::endgroup::'
 
           echo '::group::git-remote-gnostr interop (real CLI helper clone)'
@@ -182,6 +182,7 @@ jobs:
             -e GNOSTR_BOOTSTRAP=/ip4/127.0.0.1/tcp/4011/p2p/$PEER \
             -e INTEROP_CID=$CID \
             -e INTEROP_NAME=$NAME \
+            -e INTEROP_PEER=$PEER \
             -e INTEROP_OUT=/tmp/interop \
             ipfs-agentd:interop node test/interop-fetch.mjs 2>&1 | tee "$INTEROP_OUT/docker-fetcher.log"
 

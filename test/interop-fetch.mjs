@@ -29,8 +29,26 @@ const check = (label, ok, detail = '') => {
 const byCid = await tools.gitFetchBundle(ctx, { source: 'gnostr://cid/' + cid, outPath: join(outDir, 'by-cid.bundle'), topic })
 check('fetch by cid (bitswap from peer)', byCid.size > 0, byCid.size + ' bytes')
 
-const byName = await tools.gitFetchBundle(ctx, { source: name, outPath: join(outDir, 'by-name.bundle'), topic, timeoutMs: 90000 })
-check('fetch by name (topic discovery)', byName.bundle === cid && byName.size === byCid.size, byName.size + ' bytes')
+/* fetch by name over the PUBLIC topic — mesh formation between two arbitrary
+ * swarm peers is probabilistic (repro: two relay-public nodes each held 5-14
+ * topic peers yet never meshed with each other in 130s), so retry instead of
+ * one long wait. Each attempt logs the gossipsub mesh so a failure shows
+ * whether we ever shared a mesh with the publisher. */
+const PEER = process.env.INTEROP_PEER || ''
+const ATTEMPTS = Number(process.env.INTEROP_NAME_ATTEMPTS || 3)
+const ATTEMPT_TIMEOUT_MS = Number(process.env.INTEROP_NAME_TIMEOUT_MS || 60000)
+let byName = null
+for (let attempt = 1; attempt <= ATTEMPTS && !byName; attempt++) {
+  const meshPeers = ctx.node.services.pubsub.getPeers().map(String)
+  log(`by-name attempt ${attempt}/${ATTEMPTS} — topic '${topic}' mesh peers: ${meshPeers.length}` +
+    (PEER ? (meshPeers.includes(PEER) ? ' (publisher IN mesh)' : ' (publisher not in mesh yet)') : ''))
+  try {
+    byName = await tools.gitFetchBundle(ctx, { source: name, outPath: join(outDir, 'by-name.bundle'), topic, timeoutMs: ATTEMPT_TIMEOUT_MS })
+  } catch (err) {
+    log(`attempt ${attempt} failed: ${err.message}`)
+  }
+}
+check('fetch by name (topic discovery)', !!byName && byName.bundle === cid && byName.size === byCid.size, byName ? byName.size + ' bytes' : 'no ad after ' + ATTEMPTS + ' attempts')
 
 await ctx.helia.stop()
 if (failed) { log(failed + ' FAILED — exiting 1'); process.exit(1) }
