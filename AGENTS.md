@@ -195,7 +195,7 @@ Workflows:
 - `interop.yml` — live interop on the real gnostr topic, `workflow_dispatch`
   only. Inputs: `ref` (branch/tag, default master), `live_seconds` (publisher
   seed window), per-OS selects (`linux` default — also runs the Docker peer leg,
-  `windows`, `macos`). A publisher daemon seeds and re-announces every 15s; an
+  `windows`, `macos`), `opencode_model` (model beam, below). A publisher daemon seeds and re-announces every 15s; an
   independent fetcher node proves the bundle by CID (bitswap) and by name
   (topic discovery); on linux a Docker container joins as a third independent
   peer (CID/name fetch + container-side `git clone gnostr://<name>` with this
@@ -209,13 +209,17 @@ Workflows:
   Extra legs on every dispatch (independent of the OS matrix): **deployed-site**
   (probes the deployed gh-pages app; `scripts/check-deployed-site.mjs` +
   `scripts/check-deployed-peer.mjs`, playwright chromium) and **copilot-chat**
-  (non-fatal PoC — Copilot CLI gets only a hint, must figure out the chat,
+  (non-fatal PoCs — each agent gets only a hint, must figure out the chat,
   ask a run-marked question on gnostr and receive a REAL answer from a matrix
   leg's `scripts/chat-responder.mjs`; the witness `scripts/listen-chat.mjs`
   passes only on question + `responder-*` answer from DIFFERENT libp2p peers).
-  Cross-runner transport for the answer: the witness uploads its relay addrs
-  as the `chat-bridge-<run_id>` artifact; legs poll `gh run download` and the
-  responder dials them. Do NOT rely on the public gnostr mesh to deliver
+  The beam has two legs: **copilot-chat** (Copilot CLI) and **opencode-chat**
+  (OpenCode CLI, authed with the repo `OPENCODE` secret exposed to the step as
+  `OPENCODE_API_KEY`; its marker/artifact are `-opencode`-suffixed and its
+  listen port is 4017 — set `opencode_model` at dispatch for a provider/model).
+  Cross-runner transport for the answer: each leg's witness uploads its relay
+  addrs as a `chat-bridge-<run_id>[-opencode]` artifact; legs poll
+  `gh run download` for BOTH and the responder dials them. Do NOT rely on the public gnostr mesh to deliver
   between arbitrary runners — locally it carried zero envelopes in 90s.
   Relay circuits are short-lived (~1 min) and re-dial-prone: everything
   (witness relays ×10, responder re-dials, answers ×12) runs at 10s cadence,

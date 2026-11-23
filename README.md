@@ -210,8 +210,8 @@ URLs rendered).
   `act -j test -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-22.04`.
 - **interop.yml** — live interop on the real `gnostr` topic, `workflow_dispatch`
   only. Inputs: `ref` (branch/tag, default master), `live_seconds` (publisher
-  seed window), and per-OS selects — `linux` (default; also runs the Docker peer
-  leg), `windows`, `macos`. A publisher daemon seeds the repo bundle and
+  seed window), per-OS selects — `linux` (default; also runs the Docker peer
+  leg), `windows`, `macos` — and `opencode_model` (model beam, see below). A publisher daemon seeds the repo bundle and
   re-announces it every 15s; an independent fetcher node proves the bundle by CID
   (bitswap) and by name (topic discovery); on linux a Docker container joins as a
   third independent peer (fetch by CID/name + container-side
@@ -223,16 +223,24 @@ URLs rendered).
     hard checks; swarm stat/cat soft probe) and boots the in-browser Helia
     peer headlessly (`scripts/check-deployed-site.mjs`,
     `scripts/check-deployed-peer.mjs`, playwright chromium).
-  - **copilot-chat** (non-fatal PoC) — GitHub Copilot CLI gets only a hint,
-    must figure out the gossipsub chat from the repo, ASK a question on the
-    live topic and receive a REAL answer from another instance. Every matrix
+  - **Model beam** (non-fatal PoCs) — two independent AI agents each get only
+    a hint, must figure out the gossipsub chat from the repo, ASK a question on
+    the live topic and receive a REAL answer from another instance:
+    - **copilot-chat** — GitHub Copilot CLI (`--max-ai-credits 50`).
+    - **opencode-chat** — OpenCode CLI (`@opencode/cli`), authed with the
+      repo's `OPENCODE` secret (exposed to the step as `OPENCODE_API_KEY`;
+      set the `opencode_model` dispatch input to pick a provider/model). Same
+      hint-driven flow, its own marker/artifact suffix (`-opencode`) and its
+      own listen port (4017).
+    Every matrix
     leg runs `scripts/chat-responder.mjs`, which answers envelopes matching a
     run-scoped marker with facts only that node knows (platform/arch/hostname/
     peer id). The witness (`scripts/listen-chat.mjs`) passes only if it sees
     BOTH the question and a `responder-*` answer from a DIFFERENT libp2p peer.
-    Cross-runner bridge: the witness uploads its relay addrs as a run artifact
-    (`chat-bridge-<run_id>`); each leg polls for it and the responder dials
-    them (the public gnostr mesh alone does not reliably deliver between
+    Cross-runner bridge: each leg's witness uploads its relay addrs as a run
+    artifact (`chat-bridge-<run_id>[-opencode]`); every matrix leg polls for
+    BOTH and the responder dials them (the public gnostr mesh alone does not
+    reliably deliver between
     arbitrary runners, and relay circuits are short-lived — everything
     re-dials/relays at 10s cadence). Select ≥2 OSes for a true cross-OS
     answer; the responder's platform appears in its answer text.
