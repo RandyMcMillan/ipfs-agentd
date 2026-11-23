@@ -129,7 +129,15 @@ jobs:
         run: |
           set -euo pipefail
           ASSET='${{ steps.build.outputs.asset }}'
-          "./dist/$ASSET" --help | head -5
+          # capture to a file, NOT a pipe: `| head -5` races the writer and
+          # pipefail turns the writer's SIGPIPE into a leg failure (hit on
+          # macOS arm64); a real crash must print its own evidence
+          if ! "./dist/$ASSET" --help > "$RUNNER_TEMP/smoke.out" 2>&1; then
+            echo "::error::binary exited $? — output:"
+            cat "$RUNNER_TEMP/smoke.out"
+            exit 1
+          fi
+          head -5 "$RUNNER_TEMP/smoke.out"
           echo "binary smoke OK: $ASSET"
 
       - uses: actions/upload-artifact@v4
