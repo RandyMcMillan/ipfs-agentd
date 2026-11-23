@@ -193,6 +193,15 @@ function runGit (args) {
 export async function gitPublishRepo (ctx, { repoPath, name, topic = 'gnostr' }) {
   const dir = resolvePath(repoPath)
   await accessSync(join(dir, '.git'))   /* fail early with a clear message */
+  /* a shallow clone (CI checkouts with fetch-depth 1) bundles only the tip:
+   * fetchers then die on "Failed to traverse parents". Refuse instead of
+   * publishing a bundle nobody can clone. */
+  try {
+    accessSync(join(dir, '.git', 'shallow'))
+    throw new Error('repo is shallow (e.g. checkout fetch-depth 1) — a bundle would miss parents; publish from a full clone')
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err
+  }
   const tmp = mkdtempSync(join(tmpdir(), 'ipfs-agentd-bundle-'))
   const bundlePath = join(tmp, 'repo.bundle')
   try {

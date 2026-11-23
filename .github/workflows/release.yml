@@ -17,6 +17,12 @@ on:
         description: 'Existing tag to release (default: the ref that dispatched)'
         required: false
 
+# bash everywhere: on windows runners GitHub maps this to Git Bash,
+# which is what the run blocks are written for
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test:
     runs-on: ubuntu-latest

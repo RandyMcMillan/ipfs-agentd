@@ -34,6 +34,20 @@ import { autoNAT } from '@libp2p/autonat'
 import { dcutr } from '@libp2p/dcutr'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+
+/* File overrides for multiaddr env vars: Windows git-bash (MSYS2) rewrites env
+ * VALUES that look like POSIX paths when spawning native node — no exclude
+ * switch covers env vars reliably. Workflows stage the multiaddr in a file and
+ * pass GNOSTR_LISTEN_FILE / GNOSTR_BOOTSTRAP_FILE (a native path survives
+ * conversion); the file contents are read here, after the MSYS boundary.
+ * File wins over the env var. */
+for (const [envVar, fileVar] of [['GNOSTR_LISTEN', 'GNOSTR_LISTEN_FILE'], ['GNOSTR_BOOTSTRAP', 'GNOSTR_BOOTSTRAP_FILE']]) {
+  const p = process.env[fileVar]
+  if (p) {
+    try { process.env[envVar] = readFileSync(p, 'utf8').trim() } catch { /* keep env value */ }
+  }
+}
 
 /* canonical libp2p bootstrap list (same as helia-ipfs-relay server.js) */
 const BOOTSTRAP_LIST = [
