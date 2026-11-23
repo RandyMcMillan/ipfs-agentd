@@ -205,7 +205,7 @@ Workflows:
   only. Inputs: `ref` (branch/tag, default master), `live_seconds` (publisher
   seed window), per-OS selects (`linux` default — also runs the Docker peer leg,
   `windows`, `macos`), and the model-beam inputs `copilot` (PAID, default off),
-  `opencode_model`, `opencode_models`, `opencode_free` (below). A publisher daemon seeds and re-announces every 15s; an
+  `opencode_model`, `opencode_models` (below). A publisher daemon seeds and re-announces every 15s; an
   independent fetcher node proves the bundle by CID (bitswap) and by name
   (topic discovery); on linux a Docker container joins as a third independent
   peer (CID/name fetch + container-side `git clone gnostr://<name>` with this
@@ -227,15 +227,16 @@ Workflows:
   default off; seat required, ~50 free premium req/month) and
   **opencode-chat** (OpenCode CLI — a dynamic matrix from the
   **opencode-catalog** job: `opencode_models` list > `opencode_model` single
-  > `opencode_free` live `opencode models` query, first 3 — never hardcode;
+  > default live `opencode models` query, first 3 — never hardcode;
   the dispatch dropdown can't be populated from a query). Auth: the repo
-  `OPENCODE` secret IS AN OPENAI v1 KEY — exposed as `OPENAI_API_KEY` +
-  `OPENAI_BASE_URL=https://api.openai.com/v1`; the default query filters
-  `^openai/` (free-tagged first, else first 3). Zen/opencode-go free models
-  are NOT callable with this key ("This API key can't call models"). The
-  secret is ALSO exposed as `OPENROUTER_API_KEY` / `GEMINI_API_KEY` so
-  explicit `opencode_models` for those providers work after swapping the
-  secret and the catalog grep. Each leg's marker/artifact are
+  `OPENCODE` secret IS AN OPENCODE ZEN KEY (`oc_sk_…`) — exposed as
+  `OPENCODE_API_KEY` (base `https://opencode.ai/zen/v1`); the default query
+  filters `^opencode/` (Zen free models, free-tagged first, else first 3;
+  `opencode-go/` needs a GO subscription and is deliberately excluded).
+  Probe the key: `curl https://opencode.ai/zen/v1/models -H "Authorization:
+  Bearer $KEY"`. The secret is ALSO exposed as `OPENAI_API_KEY` /
+  `OPENROUTER_API_KEY` / `GEMINI_API_KEY` so explicit `opencode_models` for
+  those providers work after swapping the secret and the catalog grep. Each leg's marker/artifact are
   `-opencode-<model-slug>`-suffixed (slugged because artifact names reject
   `:` — OpenRouter free ids end in `:free`); listen port 4017 is per-runner.
   Cross-runner transport for the answer: each leg's witness uploads its relay

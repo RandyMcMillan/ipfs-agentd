@@ -36,48 +36,44 @@ on:
       # --- model beam (copilot-chat + opencode-chat legs) -----------------------
       # copilot is PAID -> DEFAULT OFF (opt in with `copilot`). The opencode leg
       # is free-first; precedence: opencode_models (list) > opencode_model
-      # (single) > opencode_free live catalog query (`opencode models |
-      # grep -i free`, first 3 — the free list rotates weekly, never hardcode
-      # it). The dispatch dropdown itself CANNOT be populated from a query;
-      # the catalog job below does it in-workflow and feeds a dynamic matrix.
+      # (single) > live free-catalog query (`opencode models | grep -i free`,
+      # first 3 — the free list rotates weekly, never hardcode it). The
+      # dispatch dropdown itself CANNOT be populated from a query; the
+      # catalog job below does it in-workflow and feeds a dynamic matrix.
       #
-      # CURRENTLY CONFIGURED: the OPENCODE repo secret IS AN OPENAI v1 KEY
-      # (https://platform.openai.com/api-keys) — the steps expose it as
-      # OPENAI_API_KEY with OPENAI_BASE_URL=https://api.openai.com/v1, and the
-      # default opencode_free query selects openai/ models (free-tagged first,
-      # else the first 3 — OpenAI has no standing free tier, so the cheap
-      # nano models are the default beam). Zen free models are NOT usable
-      # with this key ("This API key can't call models").
+      # CURRENTLY CONFIGURED: the OPENCODE repo secret IS AN OPENCODE ZEN KEY
+      # (https://opencode.ai/zen — `oc_sk_` prefix). The steps expose it as
+      # OPENCODE_API_KEY (the env var the opencode `opencode` provider reads,
+      # base https://opencode.ai/zen/v1), and the default free query selects
+      # opencode/ models (the Zen provider's `*-free` ids; opencode-go/
+      # models need a separate GO subscription — excluded). Probe the key:
+      #   curl https://opencode.ai/zen/v1/models -H "Authorization: Bearer $KEY"
       #
       # Free alternatives if you swap the secret (Settings -> Secrets and
       # variables -> Actions):
       #   * OpenRouter free models — https://openrouter.ai/keys, free key, no
       #     card; IDs ending :free are $0 (50 req/day, 1,000/day after a
       #     one-time $10 top-up). Exposed as OPENROUTER_API_KEY; also switch
-      #     the catalog grep in opencode-catalog from '^openai/' to
+      #     the catalog grep in opencode-catalog from '^opencode/' to
       #     '^openrouter/'.
       #   * Google Gemini free tier — https://aistudio.google.com, free key,
       #     ~1,500 requests/day; exposed as GEMINI_API_KEY / GOOGLE_API_KEY.
-      #   * OpenCode Zen free models — no key: run `opencode auth login` once
-      #     anywhere. (Fine print: free-tier prompts may train the models.)
-      # The run step exposes the SAME secret as OPENCODE_API_KEY,
-      # OPENAI_API_KEY, OPENROUTER_API_KEY and GEMINI_API_KEY so any of the
-      # above just works; if your provider wants another name (GROQ_API_KEY,
-      # ...), add it there.
+      #   * OpenAI — https://platform.openai.com/api-keys (PAID, no free
+      #     tier; expose as OPENAI_API_KEY + OPENAI_BASE_URL=
+      #     https://api.openai.com/v1 and switch the grep to '^openai/').
+      # The steps expose the SAME secret as OPENCODE_API_KEY, OPENAI_API_KEY,
+      # OPENROUTER_API_KEY and GEMINI_API_KEY so any of the above just works;
+      # if your provider wants another name (GROQ_API_KEY, ...), add it there.
       copilot:
         description: 'Model beam: Copilot leg (PAID -- needs a Copilot seat; free tier ~50 premium req/month)'
         type: boolean
         default: false
       opencode_model:
-        description: 'OpenCode leg: ONE model (provider/model, e.g. google/gemini-3.5-flash); empty + free on = live free-catalog matrix'
+        description: 'OpenCode leg: ONE model (provider/model, e.g. opencode/gpt-4.1-mini); empty = live free-catalog matrix'
         default: ''
       opencode_models:
         description: 'OpenCode leg: MULTI-model matrix (comma-separated provider/model list; overrides opencode_model)'
         default: ''
-      opencode_free:
-        description: 'OpenCode leg: no explicit model -> query the live catalog for FREE models and matrix over them'
-        type: boolean
-        default: true
       verbose:
         description: 'Model beam: verbose agent chat — opencode streams --thinking + --print-logs; full transcripts land in the step summary'
         type: boolean
@@ -572,10 +568,10 @@ jobs:
   # its output as a dynamic matrix. Precedence:
   #   opencode_models (comma list) -> one leg per model
   #   opencode_model  (single)     -> one leg
-  #   else opencode_free           -> `opencode models` LIVE catalog, openai/
-  #                                   models (free-tagged first, else first 3
-  #                                   -- the catalog rotates, never hardcode)
-  #   else                         -> '[]' -> the leg job skips entirely
+  #   else                         -> `opencode models` LIVE catalog, the
+  #                                   opencode/ (Zen) models, free-tagged
+  #                                   first, else the first 3 — the catalog
+  #                                   rotates, never hardcode
   opencode-catalog:
     name: OpenCode model catalog (resolve legs)
     runs-on: ubuntu-latest
@@ -599,8 +595,8 @@ jobs:
         # the catalog lists more (incl. paid) models when credentials are
         # present -- expose the OPENCODE secret under the common provider
         # names so the free filter sees everything the key unlocks. THIS
-        # REPO'S OPENCODE SECRET IS AN OPENAI v1 KEY: OPENAI_API_KEY +
-        # OPENAI_BASE_URL=https://api.openai.com/v1
+        # REPO'S OPENCODE SECRET IS AN OPENCODE ZEN KEY (oc_sk_): it
+        # authenticates as OPENCODE_API_KEY (base https://opencode.ai/zen/v1)
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE }}
           OPENAI_API_KEY: ${{ secrets.OPENCODE }}
@@ -628,23 +624,20 @@ jobs:
           elif [ -n "$SINGLE" ]; then
             echo "models=[\"$SINGLE\"]" >> "$GITHUB_OUTPUT"
             echo "opencode legs (single): $SINGLE"
-          elif [ "${{ inputs.opencode_free }}" = "true" ]; then
-            # OPENCODE secret = OpenAI v1 key → only openai/ models are
-            # callable; prefer ids tagged free, fall back to the first 3
-            # openai/ models (OpenAI has no standing free tier, so the cheap
-            # nano models are the default beam)
-            free=$(catalog | grep '^openai/' | grep -i free | head -3 || true)
-            [ -z "$free" ] && free=$(catalog | grep '^openai/' | head -3 || true)
+          else
+            # OPENCODE secret = Zen key → the callable free models live on
+            # the opencode/ provider (opencode-go/ needs a GO subscription,
+            # so '^opencode/' deliberately excludes it). Prefer ids tagged
+            # free, fall back to the first 3 opencode/ models.
+            free=$(catalog | grep '^opencode/' | grep -i free | head -3 || true)
+            [ -z "$free" ] && free=$(catalog | grep '^opencode/' | head -3 || true)
             json=''; sep=''
             for m in $free; do json="$json$sep\"$m\""; sep=','; done
             echo "models=[$json]" >> "$GITHUB_OUTPUT"
-            echo "opencode legs (openai catalog): [${json}]"
+            echo "opencode legs (zen free catalog): [${json}]"
             if [ -z "$json" ]; then
-              echo "::warning::no openai/ models in the live catalog -- set opencode_model / opencode_models, or check the OPENCODE secret"
+              echo "::warning::no opencode/ models in the live catalog -- set opencode_model / opencode_models, or check the OPENCODE secret"
             fi
-          else
-            echo "models=[]" >> "$GITHUB_OUTPUT"
-            echo 'opencode legs: none (no model set, opencode_free off)'
           fi
           exit 0   # resolve must NEVER fail: legs consume its output
 
@@ -657,10 +650,9 @@ jobs:
   # artifact (suffixed -opencode-<model slug>), marker and listen port
   # (4017 -- the hint puts OpenCode's node there so the witness dial is
   # deterministic; per-runner, so matrix legs don't collide). Auth: the
-  # OPENCODE repo secret is exposed under OPENCODE_API_KEY, OPENROUTER_API_KEY
-  # and GEMINI_API_KEY -- see the inputs comment: THIS REPO's OPENCODE secret
-  # is an OpenAI v1 key (OPENAI_API_KEY, base https://api.openai.com/v1).
-  # NON-FATAL: orange.
+  # OPENCODE repo secret is exposed under OPENCODE_API_KEY (Zen key), plus
+  # OPENAI/OPENROUTER/GEMINI names for a swapped secret — see the inputs
+  # comment. NON-FATAL: orange.
   opencode-chat:
     needs: opencode-catalog
     if: needs.opencode-catalog.outputs.models != '[]' && needs.opencode-catalog.outputs.models != ''
@@ -717,6 +709,8 @@ jobs:
           PROVIDER=${MODEL%%/*}
           # (1) HTTP probe: connectivity + key validity + quota in one request
           case "$PROVIDER" in
+            opencode)
+              URL="https://opencode.ai/zen/v1/models"; KEY="$OPENCODE_API_KEY" ;;
             openai)
               URL="$OPENAI_BASE_URL/models"; KEY="$OPENAI_API_KEY" ;;
             openrouter)
@@ -809,9 +803,9 @@ jobs:
         if: steps.preflight.outputs.callable == 'true'
         timeout-minutes: 12
         continue-on-error: true   # PoC: orange on failure, never red
-        # THIS REPO'S OPENCODE SECRET IS AN OPENAI v1 KEY — exposed as
-        # OPENAI_API_KEY with the base set explicitly; the other provider
-        # names stay so explicit opencode_models for those providers work
+        # THIS REPO'S OPENCODE SECRET IS AN OPENCODE ZEN KEY (oc_sk_) —
+        # exposed as OPENCODE_API_KEY; the other provider names stay so
+        # explicit opencode_models for those providers work
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE }}
           OPENAI_API_KEY: ${{ secrets.OPENCODE }}
