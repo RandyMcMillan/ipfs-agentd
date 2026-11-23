@@ -1,212 +1,88 @@
-# AGENTS.md — ipfs-agentd
+# AGENTS.md
 
-Guidance for AI agents (and humans) working in this repository.
+You are an agent reading `ipfs-agentd`. This file orients you; README.md is the
+human-facing reference and is kept current — read it next.
 
-## What this is
+## What this repo is
 
-One persistent local IPFS daemon per agent: headless Helia node on a disk
-blockstore, exposed through a **standard MCP interface by default** (stdio
-transport, 14 tools). Content stays on the agent's disk until explicitly
-published (gnostr topic, IPNS, or a pinning service).
+A persistent local IPFS daemon (Helia 7 / js-libp2p 3.x, Node >= 22) for one AI
+agent: disk blockstore + MCP stdio server + gossipsub chat CLI + git remote
+helpers + repo web service. Agents on the same machine interoperate with gnostr
+git tools (`git-remote-gnostr`, `gnostr-publish`) over the public `gnostr`
+gossipsub topic.
 
-## Usage
+## Layout
 
-```sh
-npm install
-ipfs-agentd                         # bin: MCP over stdio, repo at ~/.ipfs-agentd
-ipfs-agentd --repo /path --logging debug
-ipfs-agentd chat --topic mymesh --name alice   # human <-> agent topic chat
-npm test                            # smoke + MCP e2e + persist + chat e2e
-```
+- `src/node.js` — node factory (bootstrap list, relay v2, dcutr, autonat, DHT
+  client mode, re-bootstrap sweep, `GNOSTR_*_FILE` env reads). Everything builds
+  on this; do not create parallel libp2p stacks.
+- `src/tools.js` — MCP tool implementations (publish/fetch/pubsub/IPNS).
+- `src/daemon.js`, `src/mcp-server.js`, `src/bin.js` — stdio server + CLI entry.
+- `src/cli.js` — chat CLI; `src/serve.js` — repo web service; `src/git-remote-*.js` — git helpers.
+- `test/` — `smoke.mjs`, `mcp-e2e.mjs`, `persist.mjs`, `chat-e2e.mjs`,
+  `git-remote-e2e.mjs`, `web-e2e.mjs`, `interop-publisher.mjs`, `interop-fetch.mjs`.
+- `scripts/listen-gnostr.mjs` — join the live gnostr topic and print repo ads.
+- `.github/workflows/` — ci (push/PR), interop (dispatch-only), docker (GHCR),
+  release (tags), deploy-gh-pages.
 
-- **stdout carries the MCP protocol only.** All logging goes to stderr
-  (timestamped) — never print to stdout from daemon code.
-- Adds are auto-pinned. Pins survive restarts (`test/persist.mjs` proves it).
-- Chat envelope (shared by the CLI and agents via `ipfs_pubsub_publish/pull`):
-  `{"type":"chat","name","text","at"}` — see README "Chat CLI".
-- Non-envelope topic payloads render as `RAW <base64>` in the CLI — binary
-  agent protocols stay visible to humans.
+## How an agent uses this daemon
 
-### Env
+1. Start it: `ipfs-agentd` (stdio MCP, repo at `~/.ipfs-agentd`). stdout is the
+   MCP protocol exclusively — never print to stdout; log to stderr.
+2. Tools (full table in README): `ipfs_id`, `ipfs_add`/`ipfs_add_all`/`ipfs_cat`/
+   `ipfs_stat`, pin management, `ipfs_resolve`, `ipfs_pubsub_publish`/`_pull`,
+   `ipfs_name_publish`, `git_publish_repo`, `git_fetch_bundle`.
+3. To talk with humans/other agents live: join topic `gnostr` and speak the chat
+   envelope: `{"type":"chat","name":"<display name>","text":"<message>","at":<epoch ms>}`
+   (UTF-8 JSON). Non-envelope payloads render as `RAW <base64>` to humans.
+4. To publish/fetch git repos: `git_publish_repo` (bundle → IPFS → pin → ad) and
+   `git_fetch_bundle` (`gnostr://cid/<CID>` or `gnostr://<name>`). Ad format:
+   `{"type":"git","name","at","bundle","addrs?"}`.
 
-| Var | Default | Purpose |
-|---|---|---|
-| `IPFS_AGENTD_REPO` | `~/.ipfs-agentd` | Blockstore/datastore dir |
-| `GNOSTR_LISTEN` | — | Extra listen multiaddrs (public hosts) |
-| `GNOSTR_BOOTSTRAP` | — | Extra peers to dial at boot (e.g. a publisher's addr) |
-| `REBOOTSTRAP_SECS` | `60` | Re-dial unconnected bootstrap peers every N s (0 = off) |
+## Hard-won operational rules (do not relearn these)
 
-### Reachability model
+- **Subscribe before you publish.** gossipsub's fanout path (publish without
+  subscribe) samples recipients once and never re-samples while you keep
+  publishing — on the public swarm it freezes full of other topic subscribers
+  and late-joining peers never hear your ads. `pubsub.subscribe(topic)` puts you
+  on the mesh path, which grafts new topic peers every heartbeat. This burned a
+  CI interop run ("no git ad within 90000ms" while directly connected).
+- **Two NAT'd peers that never dial each other do not exchange messages.** Dial
+  advertised addrs (or a shared rendezvous) first; gossipsub needs a mesh.
+- **Relayed bitswap fetch fails** in this stack ("Failed to load block" over a
+  stable relayed session). Use pubsub for discovery, then direct-dial.
+- **`git_publish_repo` refuses shallow clones** (checkout `fetch-depth 1`) — a
+  depth-1 `git bundle --all` misses parents. CI checkouts that publish must use
+  `fetch-depth: 0`.
+- **Windows git-bash (MSYS2)** rewrites env *values* that look like POSIX paths
+  when spawning native node; no exclude switch covers env vars. Stage multiaddrs
+  in files and pass `GNOSTR_LISTEN_FILE` / `GNOSTR_BOOTSTRAP_FILE` (read in
+  `src/node.js`; file wins over env).
+- **Hosted-runner uid (1001) vs image `node` uid (1000)**: a container can't
+  write host-mounted dirs — `mkdir -p` + `chmod -R 777` on the mount, or pass
+  state via env.
+- `$RUNNER_TEMP` is wiped between steps on hosted runners; docker legs recreate
+  state dirs and take CID/name via env, not files.
 
-NAT'd by default and still dialable: the node reserves slots on public relay v2
-servers (Kubo bootstrap nodes run relays by default; `discoverRelays: 2`),
-advertises `/p2p-circuit` addresses, and runs `autonat` + `dcutr` so relayed
-connections upgrade to direct ones when possible. `GNOSTR_LISTEN` on a public
-host gives direct dialability instead.
+## Contributing (agent workflow)
 
-## Development
+- `npm test` must pass (all six suites: smoke, mcp-e2e, persist, chat-e2e,
+  git-remote-e2e, web-e2e).
+- Commits are GPG-signed (repo has `commit.gpgsign=true`); identity and key are
+  configured repo-locally.
+- CI exactness: use Node from `.nvmrc` (22.x); run `bash -n` on workflow run
+  blocks after editing YAML; interop changes are validated with a local
+  publisher+fetcher pair before pushing.
+- Keep README.md and this file in sync with behavior changes.
 
-- Node >= 22 (see `.nvmrc`). Layout:
-  - `src/node.js` — node factory. **Do not break the recipe**: helia must own
-    the libp2p config (`createHelia({ libp2p: ... })`) and be started
-    explicitly, or bitswap never registers (same recipe as helia-ipfs-relay's
-    `gnostr-publish.js`).
-  - `src/tools.js` — all tool logic, transport-agnostic: plain JSON in/out.
-    The MCP layer must stay a thin wrapper.
-  - `src/daemon.js` — zod schemas + `server.tool()` registrations + argv
-    parsing (`--repo`, `--logging`, `--quiet`). Tool-call logging is at
-    `debug` level; lifecycle/peer events at `info`.
-  - `src/mcp-server.js` — thin entry: `main()` from `src/daemon.js`.
-  - `src/bin.js` — CLI dispatcher: `daemon` (default) / `chat` / `serve` / `--help`.
-  - `src/cli.js` — gossipsub chat REPL (envelope `{type:'chat',name,text,at}`;
-    prints `listen:`/`listen(relayed):` lines so scripts/agents can attach).
-  - `src/web.js` — GitHub-like repo browser (`serve`): node:http + git CLI
-    only, zero third-party deps; markdown renderer escapes-first (XSS-safe).
-    One subdir of `--root` per repo; `.bundle` files materialize to a cache
-    dir inside the root (skipped by the scanner — no HEAD/.git at its top).
-  - `src/git-remote-helper.js` — shared machinery for the two git remote
-    helpers (boot/fetch/materialize/serve protocol).
-  - `src/logger.js` — leveled stderr logger shared by daemon and CLI.
-- **Dependency rules (hard-won, see commit history):**
-  - `blockstore-fs@^4` + `datastore-fs@^12` — the only versions matching helia
-    7's interfaces. Older majors install cleanly and silently no-op pins.
-  - helia `pins.add/rm` are async generators — drain them (see `drainPin`);
-    swallow `AlreadyPinnedError` on re-pin.
-  - Several `multiformats` copies coexist: pass CID **strings** to
-    `@helia/unixfs`, CID **instances** to `helia.pins`.
-  - Keep `@libp2p/*` pins aligned with helia-ipfs-relay's package.json.
-- **No silent errors in tests:** a test that spawns a child (CLI, server,
-  helper) must surface the child's stderr whenever the child dies or the
-  check fails — see `test/web-e2e.mjs` ("child exited early — stderr: …").
-  A green-looking run over a dead child process is the worst outcome.
-- **Adding a tool:** implement in `src/tools.js` (pure async function, JSON
-  args/result, throw on error), register in `src/daemon.js` with a zod
-  schema, add a check to `test/smoke.mjs`, bump the tools count assertion in
-  `test/mcp-e2e.mjs`.
-- Commits: GPG-signed (`user.signingkey 3B696CCB` is set in this repo), topic
-  branches, PRs — never push to `master` directly.
-
-## Bridging / platform adaptation
-
-Stdio MCP is the default and only shipped transport. When something else
-needs to speak to the daemon:
-
-- **MCP-capable agent clients** (Claude Code, Cline, Kimi Code, …): add as a
-  local stdio server, e.g.
-  `{"mcpServers": {"ipfs": {"command": "node", "args": ["/abs/path/src/mcp-server.js"]}}}`.
-  Use absolute paths; run scripts through an explicit interpreter (`node x.js`)
-  — packed/plugin sandboxes often mount files non-executable.
-- **Remote/HTTP clients:** bridge stdio↔SSE with any MCP proxy in front of
-  `src/mcp-server.js`. Not shipped; keep the daemon local — see README
-  "Roadmap" for why a hosted Kimi-plugin variant was rejected (hosted-only +
-  OAuth MCP), and only revisit if the privacy model changes.
-- **gnostr git interop:** `git_publish_repo`/`git_fetch_bundle` speak the same
-  ad format as helia-ipfs-relay (`{type:'git', name, at, bundle, addrs?}`).
-  Adversarial settings: always the `gnostr://cid/<CID>` form — name discovery
-  is unauthenticated (newest ad wins).
-- **git remote helpers shipped here:** `src/git-remote-gnostr.js` and
-  `src/git-remote-ipfs.js` (bins via package.json; shared machinery in
-  `src/git-remote-helper.js`). Both reuse `src/node.js` — never fork the
-  libp2p stack into them. Helpers share no state with the daemon: own repo
-  at `~/.ipfs-agentd-git` (`IPFS_AGENTD_GIT_REPO`), fetch-only, and they
-  release the swarm (`stopNode`) before relaying to `git-upload-pack`.
-  `test/git-remote-e2e.mjs` covers both URL forms with real `git clone`.
-- **Pubsub across NAT:** two NAT'd nodes cannot see each other's topic
-  messages without a mutually reachable rendezvous (a public relay subscriber
-  or a shared helia-ipfs-relay `server.js` host). Relay reservations make
-  nodes *dialable*; they do not bridge gossipsub meshes.
-- **Docker:** `Dockerfile` is all-in-one (web service is the default CMD;
-  override `command:` for daemon/chat). One container = one instance; repos
-  are per-instance volume mounts at `/data/repos`. `ARG BASE`/`RUN_USER`
-  exist for offline builds against internal base images. The compose file is
-  an example, not a requirement.
-
-## Useful prompts
-
-What an agent (or human driving one) typically asks. Verbatim-ish examples —
-adjust topics/paths/CIDs:
-
-**Content**
-- "Add this file's bytes to IPFS and pin the result" → `ipfs_add` (b64 in,
-  CID out, auto-pinned). Directory trees → `ipfs_add_all`.
-- "Fetch bafy… and show the first 4 KiB" → `ipfs_cat` with `offset`/`length`.
-- "Is bafy… still pinned? What else is pinned?" → `ipfs_pin_ls` / `ipfs_pin_rm`.
-
-**Naming / addressing**
-- "Publish bafy… under an IPNS name and resolve it back" →
-  `ipfs_name_publish` then `ipfs_resolve` (`/ipns/<key PeerId>`). One-shot key
-  per call — not yet persisted across calls.
-
-**Coordination**
-- "Announce this repo on the gnostr topic so others can clone it" →
-  `git_publish_repo` (bundle → IPFS → pin → ad `{type:'git',name,at,bundle,addrs?}`).
-- "Fetch repo 'xyz' / bundle bafk… and save it for git" → `git_fetch_bundle`
-  (`gnostr://cid/<CID>` or `gnostr://<name>`); then `git bundle verify` /
-  `git clone` locally, or `git clone gnostr://…` / `ipfs://<cid>` directly —
-  this repo ships both remote helpers as bins.
-- "Listen on topic X for the next 60s and summarize every message" →
-  `ipfs_pubsub_pull` in a poll loop (subscribe-on-first-pull, bounded queue).
-- "Tell the humans on topic 'ops' that the build is green" →
-  `ipfs_pubsub_publish` with the chat envelope
-  `{"type":"chat","name":"agent-1","text":"build green","at":<epoch ms>}` —
-  renders in `ipfs-agentd chat`.
-
-**Chat CLI (humans)**
-- `ipfs-agentd chat --topic ops --name alice` then plain lines; agents see
-  them via `ipfs_pubsub_pull`, agents reply via `ipfs_pubsub_publish`.
-- Anything arriving that isn't a chat envelope shows as `RAW <base64>` —
-  inspect with `base64 -d` when an agent speaks a binary protocol.
-
-**Gotchas baked into the tools**
-- `ipfs_cat` caps single responses at 32 MiB — page with `offset`/`length`.
-- Publish with zero pubsub peers → `published:false`; the content is still on
-  IPFS/pinned — republish when peers connect.
-- Name discovery (`gnostr://<name>`) is unauthenticated, newest ad wins;
-  adversarial settings → `gnostr://cid/<CID>`.
-
-## CI / gh
-
-Workflows:
-
-- `ci.yml` — reusable `./.github/actions/npm-test` on every push/PR (Node 22).
-  Ignores `v*` tags — release.yml owns the tag gate.
-- `docker.yml` — owns ALL image pushes to GHCR: `latest`+`:<sha>` on master,
-  `:<tag>`+`latest` on `v*`, build-only on PRs (docker/metadata-action for
-  tagging). release.yml does not push images.
-- `release.yml` — tag trigger (`v*`): test gate via the npm-test action, then
-  a GitHub release (softprops/action-gh-release). `resolve-tag` composite
-  resolves the dispatch input vs ref.
-- `interop.yml` — live interop on `feat/**` pushes and manual dispatch
-  (`live_seconds` input): publisher seeds for the live window, an independent
-  node fetches by CID and by name, the real `git-remote-gnostr` helper clones
-  the bundle with plain git.
-
-Running CI locally with `act` (sandbox: dockerd started via `nohup dockerd &`,
-act binary at `/mnt/agents/opt/act`, runner image
-`ghcr.io/catthehacker/ubuntu:act-22.04` — Docker Hub is unreachable here):
+## Verification commands
 
 ```sh
-# clean build, always — no -r (stale containers mask failures)
-act -j test -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-22.04 --bind -vv
-act workflow_dispatch -W .github/workflows/interop.yml -e /tmp/act-event.json \
-  -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-22.04 --bind -vv
+npm test                                   # full suite
+node test/smoke.mjs                        # every tool, in-process
+node scripts/listen-gnostr.mjs             # watch the live gnostr topic
+INTEROP_REPO=$PWD INTEROP_LIVE_SECS=60 INTEROP_AD_SECS=5 \
+  INTEROP_OUT=/tmp/interop node test/interop-publisher.mjs   # local seeder
+GNOSTR_BOOTSTRAP_FILE=/tmp/interop/bootstrap \
+  node test/interop-fetch.mjs              # independent fetcher
 ```
-
-Known sandbox flake: act fetching actions from github.com (`info/refs: EOF`)
-fails intermittently — re-run; the repo-side retry loops (npm ci in the
-action + Dockerfile) only cover registry fetches, not action clones.
-
-`gh` CLI: authenticate with `gh auth login` (token) for private endpoints.
-For this public repo, the REST API works unauthenticated and is enough to poll
-runs: `gh run list`, or plain
-`curl https://api.github.com/repos/RandyMcMillan/ipfs-agentd/actions/runs`.
-Git-over-SSH uses `~/.ssh/config` → IdentityFile
-`/mnt/agents/output/ssh/id_ed25519`.
-
-## Finding skills / plugins
-
-Before building new capability here, check whether an installable plugin or
-skill already covers it: use the plugin system's skill/plugin search
-("find skills") with keywords like `ipfs`, `mcp`, `libp2p`, `pinning`. Use
-what exists; only then extend `src/tools.js`. This repo deliberately ships a
-daemon + tools, not a Kimi plugin bundle (see README Roadmap).
