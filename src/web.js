@@ -29,6 +29,7 @@ import { tmpdir } from 'node:os'
 import { createAgentNode, DEFAULT_REPO } from './node.js'
 import { createLogger } from './logger.js'
 import * as tools from './tools.js'
+import { THEME_CSS, getPrimerCss } from './web-theme.js'
 
 const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
@@ -133,15 +134,18 @@ function timeAgo (t) {
   return Math.floor(s / 86400) + ' days ago'
 }
 
-/* ── GitHub-like chrome ─────────────────────────────────────────────── */
-const STYLE = `
+/* ── GitHub-like chrome ───────────────────────────────────────────────
+ * The page shell is the ipfs-gh-pages index.html repurposed: @primer/css
+ * (served at /primer.css) + its inline stylesheet (served at /theme.css),
+ * dark mode by default. AGENTD_CSS below is this app's component layer on
+ * top of that palette. */
+const AGENTD_CSS = `
 :root{color-scheme:dark;--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#e6edf3;--dim:#8b949e;--link:#58a6ff;--accent:#238636;--code:#161b22}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+body{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+main{padding-top:20px;padding-bottom:40px}
 a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
-header.top{background:var(--panel);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;gap:12px}
-header.top .mark{color:var(--fg);font-weight:600;font-size:16px}
-header.top .inst{color:var(--dim);font-size:12px;margin-left:auto}
-main{max-width:980px;margin:0 auto;padding:20px}
+.Header .mark{color:var(--fg);font-weight:600;font-size:16px;white-space:nowrap}
+.Header .inst{color:var(--fg);font-size:12px;white-space:nowrap}
 .repohead{border-bottom:1px solid var(--border);padding:16px 0;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .repohead h1{font-size:20px;margin:0;font-weight:500}
 .badge{border:1px solid var(--border);border-radius:12px;padding:1px 10px;font-size:12px;color:var(--dim)}
@@ -168,7 +172,7 @@ pre.code{padding:12px;overflow:auto}
 button.copy{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px}
 .readme{padding:16px 24px}.readme h1,.readme h2{border-bottom:1px solid var(--border);padding-bottom:6px}
 .hint{color:var(--dim);font-size:12px}
-footer{border-top:1px solid var(--border);margin-top:40px;padding:16px 20px;color:var(--dim);font-size:12px;text-align:center}
+footer.footer{border-top:1px solid var(--border);margin-top:40px;padding:16px 20px;color:var(--dim);font-size:12px;text-align:center}
 .flash{background:#2ea04322;border:1px solid #2ea04366;color:#7ee787;border-radius:6px;padding:8px 14px;margin:10px 0;font-size:13px}
 .flash b{color:#7ee787}
 .repo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin:16px 0}
@@ -178,11 +182,16 @@ footer{border-top:1px solid var(--border);margin-top:40px;padding:16px 20px;colo
 .section-title{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin:22px 0 8px}`
 
 function page (title, body, inst) {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)}</title><style>${STYLE}</style></head><body>
-<header class="top"><span class="mark">⬡ ipfs-agentd</span><span class="hint">decentralized git for agents &amp; humans</span><span class="inst">${esc(inst)}</span></header>
-<main>${body}</main>
-<footer>served by ipfs-agentd — no GitHub required · clone over <code>gnostr://</code> or <code>ipfs://</code></footer>
+  return `<!doctype html><html lang="en" data-color-mode="dark" data-light-theme="light" data-dark-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(title)}</title><link rel="stylesheet" href="/primer.css"><link rel="stylesheet" href="/theme.css"><style>${AGENTD_CSS}</style></head>
+<body>
+<header class="Header">
+  <div class="Header-item"><a class="Header-link" href="/"><span class="mark">⬡ ipfs-agentd</span></a></div>
+  <div class="Header-item Header-item--full"><span class="hint">decentralized git for agents &amp; humans</span></div>
+  <div class="Header-item"><span class="inst">${esc(inst)}</span></div>
+</header>
+<div class="container-xl px-3 px-md-4 px-lg-5"><main>${body}</main></div>
+<footer class="footer">served by ipfs-agentd — no GitHub required · clone over <code>gnostr://</code> or <code>ipfs://</code></footer>
 </body></html>`
 }
 
@@ -241,12 +250,12 @@ async function repoPage (name, dir, pubs, inst) {
   const pub = pubs.get(name)
   const cloneUrls = [`gnostr://${name}`, ...(pub ? [`ipfs://${pub.bundle}`] : [])]
   const body = `
-  <div class="repohead"><h1>⬡ <a href="/">⬡</a> / ${esc(name)}</h1>
-    <span class="badge">${esc(info.branch)}</span><span class="badge">${info.branches.length} branch(es)</span>
+  <div class="repohead"><h1><a href="/" class="color-fg-accent">⬡</a> <span class="color-fg-muted">/</span> ${esc(name)}</h1>
+    <span class="Label Label--secondary">${esc(info.branch)}</span><span class="Label Label--secondary">${info.branches.length} branch(es)</span>
     <span class="clonebox"><input readonly value="${esc(cloneUrls[0])}" onclick="this.select()"><button class="copy" onclick="navigator.clipboard.writeText('${esc(cloneUrls[0])}')">Copy</button></span>
   </div>
   ${pub ? `<div class="flash">announced on <b>${esc(pub.topic)}</b> · bundle <code>${esc(pub.bundle)}</code>${pub.addrs.length ? ' · <code>' + esc(pub.addrs[0]) + '</code>' : ''}</div>` : ''}
-  <div class="hint" style="margin:8px 0">clone: <code>git clone ${esc(cloneUrls.join('</code> · <code>'))}</code> · <a href="/${esc(name)}/bundle">download .bundle</a></div>
+  <div class="hint" style="margin:8px 0">clone: <code>git clone ${cloneUrls.map(esc).join('</code> · <code>')}</code> · <a href="/${esc(name)}/bundle">download .bundle</a></div>
   <div class="panel">
     <div class="bar"><span class="badge">${esc(info.branch)}</span><span class="commit"><code>${info.head}</code> ${esc(info.subject || '')}</span><span class="hint" style="margin-left:auto">${esc(info.ago || '')}</span></div>
     <table class="files">${rows}</table>
@@ -368,6 +377,8 @@ export async function serveMain (argv = []) {
     const send = (status, body, type = 'text/plain; charset=utf-8') => { res.writeHead(status, { 'content-type': type }); res.end(body) }
     try {
       if (url === '/' || url === '') return send(200, await homePage(repos, publish ? { topic, peer: ctx.node.peerId.toString(), adSecs } : null, inst, root), 'text/html; charset=utf-8')
+      if (url === '/primer.css') return send(200, getPrimerCss(), 'text/css; charset=utf-8')
+      if (url === '/theme.css') return send(200, THEME_CSS, 'text/css; charset=utf-8')
       const name = seg[0]
       const dir = repos.get(name)
       if (!dir) return send(404, 'no such repo: ' + name)
