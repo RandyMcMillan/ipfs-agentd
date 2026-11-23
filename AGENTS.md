@@ -238,6 +238,13 @@ Workflows:
   (witness relays ×10, responder re-dials, answers ×12) runs at 10s cadence,
   and both sides `tagPeer` their topic peers or the connection managers prune
   the bridge links within seconds.
+  Both model legs PREFLIGHT before starting the witness: opencode legs probe
+  the provider HTTP API (key/quota) then `opencode run` the exact model id
+  (retried ×2 — GitHub flakes); copilot legs check the CLI runs (a real auth
+  probe would burn premium requests). A failed preflight gates the witness +
+  agent steps off and ends the leg orange in ~1 min with the API error in the
+  step summary — a fast UNAVAILABLE means auth/quota (fix the OPENCODE
+  secret), not gossipsub.
 
 Running CI locally with `act` (sandbox: dockerd started via `nohup dockerd &`,
 act binary at `/mnt/agents/opt/act`, runner image

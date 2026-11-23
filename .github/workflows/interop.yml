@@ -417,7 +417,35 @@ jobs:
       - name: Install Copilot CLI
         run: npm install -g @github/copilot && copilot --version
 
+      # cheap gate: CLI must at least run before we start the witness. (A real
+      # auth probe would burn premium requests, so copilot auth errors still
+      # surface in the agent step — fast, since the CLI exits 1 on auth fail.)
+      - name: Preflight — Copilot CLI present
+        id: preflight
+        run: |
+          set -u
+          set +e
+          if copilot --version; then
+            echo "callable=true" >> "$GITHUB_OUTPUT"
+            echo "preflight PASS: copilot CLI runs"
+          else
+            echo "callable=false" >> "$GITHUB_OUTPUT"
+            echo "reason=copilot CLI failed to run (install/GitHub flake)" >> "$GITHUB_OUTPUT"
+            echo "::warning::preflight: copilot CLI not runnable"
+          fi
+          exit 0
+
+      - name: Record leg as unavailable (preflight failed)
+        if: steps.preflight.outputs.callable != 'true'
+        continue-on-error: true   # orange, not red — the rest of the leg skips
+        run: |
+          echo "### Copilot chat interop — UNAVAILABLE" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Preflight: ${{ steps.preflight.outputs.reason }}" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       - name: Start chat witness (detached) and record bridge addrs
+        if: steps.preflight.outputs.callable == 'true'
         run: |
           set -u
           CHAT_TOPIC=gnostr CHAT_FROM=copilot \
@@ -433,7 +461,7 @@ jobs:
             || echo "::warning::witness relay addrs never landed (bridge upload will fail)"
 
       - name: Upload chat bridge addrs (artifact for the matrix legs)
-        if: always()
+        if: always() && steps.preflight.outputs.callable == 'true'
         continue-on-error: true   # bridge is best-effort; legs fall back
         uses: actions/upload-artifact@v4
         with:
@@ -441,6 +469,7 @@ jobs:
           path: ${{ runner.temp }}/chat-addrs
 
       - name: Copilot must figure out the gnostr chat AND get a real answer
+        if: steps.preflight.outputs.callable == 'true'
         timeout-minutes: 12
         continue-on-error: true   # PoC: orange on failure, never red
         env:
@@ -637,16 +666,93 @@ jobs:
       - name: Install OpenCode CLI
         run: npm install -g @opencode/cli && opencode --version
 
+      # cheap gate BEFORE the witness starts: a doomed leg must fail fast
+      # (~1 min, orange) with the API error visible, not burn the full
+      # 12-min timeout. Probes: (1) HTTP key/quota probe per provider,
+      # (2) a minimal `opencode run` of the EXACT model id, retried x2 —
+      # separates auth/quota (fix the secret) from GitHub flakes (retry).
+      - name: Preflight — is ${{ matrix.model }} callable?
+        id: preflight
+        timeout-minutes: 4
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE }}
+          OPENAI_API_KEY: ${{ secrets.OPENCODE }}
+          OPENAI_BASE_URL: https://api.openai.com/v1
+          OPENROUTER_API_KEY: ${{ secrets.OPENCODE }}
+          GEMINI_API_KEY: ${{ secrets.OPENCODE }}
+        run: |
+          set -u
+          set +e   # we guard explicitly and ALWAYS write the outputs
+          REASON=""
+          MODEL='${{ matrix.model }}'
+          PROVIDER=${MODEL%%/*}
+          # (1) HTTP probe: connectivity + key validity + quota in one request
+          case "$PROVIDER" in
+            openai)
+              URL="$OPENAI_BASE_URL/models"; KEY="$OPENAI_API_KEY" ;;
+            openrouter)
+              URL="https://openrouter.ai/api/v1/models"; KEY="$OPENROUTER_API_KEY" ;;
+            *) URL="" ;;
+          esac
+          if [ -n "$URL" ]; then
+            HTTP=$(curl -sS --max-time 20 -o "$RUNNER_TEMP/preflight-http.json" -w '%{http_code}' \
+                     "$URL" -H "Authorization: Bearer $KEY" 2>"$RUNNER_TEMP/preflight-http.err")
+            case "$HTTP" in
+              200) echo "preflight http: 200 (key valid)" ;;
+              401|403) REASON="$PROVIDER key rejected (HTTP $HTTP): $(head -c 300 "$RUNNER_TEMP/preflight-http.json" 2>/dev/null)" ;;
+              429) REASON="$PROVIDER quota exhausted (HTTP 429): $(head -c 300 "$RUNNER_TEMP/preflight-http.json" 2>/dev/null)" ;;
+              *) REASON="$PROVIDER http probe failed (code '${HTTP:-curl-error}'): $(head -c 200 "$RUNNER_TEMP/preflight-http.err" 2>/dev/null)" ;;
+            esac
+          else
+            echo "preflight http: no probe for provider '$PROVIDER' — opencode probe decides"
+          fi
+          # (2) opencode probe of the exact model id (retried: GitHub flakes)
+          if [ -z "$REASON" ]; then
+            for attempt in 1 2 3; do
+              OUT=$(timeout 90 opencode run --standalone --model "$MODEL" "Reply with exactly: ok" 2>&1)
+              RC=$?
+              if [ $RC -eq 0 ] && [ -n "$(printf '%s' "$OUT" | tr -d '[:space:]')" ]; then
+                echo "preflight opencode: callable (attempt $attempt)"
+                REASON=""
+                break
+              fi
+              echo "preflight opencode attempt $attempt failed (rc=$RC): $(printf '%s' "$OUT" | tail -c 300)"
+              REASON="opencode run failed for $MODEL (rc=$RC): $(printf '%s' "$OUT" | tail -c 300)"
+              [ $attempt -lt 3 ] && sleep $((attempt*15))
+            done
+          fi
+          if [ -z "$REASON" ]; then
+            echo "callable=true" >> "$GITHUB_OUTPUT"
+            echo "preflight PASS: $MODEL callable"
+          else
+            echo "callable=false" >> "$GITHUB_OUTPUT"
+            echo "reason=$(printf '%s' "$REASON" | tr '\n' ' ' | cut -c1-400)" >> "$GITHUB_OUTPUT"
+            echo "::warning::preflight: $MODEL NOT callable — $(printf '%s' "$REASON" | tr '\n' ' ' | cut -c1-300)"
+          fi
+          exit 0   # preflight NEVER fails the job; it gates the expensive steps
+
+      - name: Record leg as unavailable (preflight failed)
+        if: steps.preflight.outputs.callable != 'true'
+        continue-on-error: true   # orange, not red — the rest of the leg skips
+        run: |
+          echo "### OpenCode chat interop — ${{ matrix.model }} — UNAVAILABLE" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Preflight: ${{ steps.preflight.outputs.reason }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Auth/quota failure → fix the OPENCODE secret; transient failure → re-run." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       # artifact names reject ':' etc. -- slug the model id for the marker and
       # the bridge artifact (the responder matches the base marker, so the
       # suffix only needs to be unique per leg)
       - name: Slug the model id
+        if: steps.preflight.outputs.callable == 'true'
         run: |
           SLUG=$(echo '${{ matrix.model }}' | tr -cs 'a-zA-Z0-9._-' '-')
           echo "slug=$SLUG" >> "$GITHUB_ENV"
           echo "model=${{ matrix.model }} slug=$SLUG"
 
       - name: Start chat witness (detached) and record bridge addrs
+        if: steps.preflight.outputs.callable == 'true'
         run: |
           set -u
           CHAT_TOPIC=gnostr CHAT_FROM=opencode \
@@ -662,7 +768,7 @@ jobs:
             || echo "::warning::witness relay addrs never landed (bridge upload will fail)"
 
       - name: Upload chat bridge addrs (artifact for the matrix legs)
-        if: always()
+        if: always() && steps.preflight.outputs.callable == 'true'
         continue-on-error: true   # bridge is best-effort; legs fall back
         uses: actions/upload-artifact@v4
         with:
@@ -670,6 +776,7 @@ jobs:
           path: ${{ runner.temp }}/chat-addrs
 
       - name: OpenCode must figure out the gnostr chat AND get a real answer
+        if: steps.preflight.outputs.callable == 'true'
         timeout-minutes: 12
         continue-on-error: true   # PoC: orange on failure, never red
         # THIS REPO'S OPENCODE SECRET IS AN OPENAI v1 KEY — exposed as
