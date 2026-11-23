@@ -554,16 +554,21 @@ jobs:
             echo "models=[\"$SINGLE\"]" >> "$GITHUB_OUTPUT"
             echo "opencode legs (single): $SINGLE"
           elif [ "${{ inputs.opencode_free }}" = "true" ]; then
-            free=$(opencode models 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -i free | awk '{print $1}' | head -3 || true)
+            # model ids are provider/model — require a '/' so a table header or
+            # provider-only column can never leak into the matrix
+            free=$(opencode models 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -i free | awk '{print $1}' | grep / | head -3 || true)
             json=''; sep=''
             for m in $free; do json="$json$sep\"$m\""; sep=','; done
             echo "models=[$json]" >> "$GITHUB_OUTPUT"
             echo "opencode legs (free catalog): [${json}]"
-            [ -z "$json" ] && echo "::warning::no free models in the live catalog -- set opencode_model or the OPENCODE secret"
+            if [ -z "$json" ]; then
+              echo "::warning::no free models in the live catalog -- set opencode_model or the OPENCODE secret"
+            fi
           else
             echo "models=[]" >> "$GITHUB_OUTPUT"
             echo 'opencode legs: none (no model set, opencode_free off)'
           fi
+          exit 0   # resolve must NEVER fail: legs consume its output
 
   # Second beam of the model interop PoC (copilot-chat is the first): the
   # OpenCode CLI gets the SAME hint-driven treatment -- no prior knowledge,
