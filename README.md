@@ -169,6 +169,19 @@ URLs rendered).
 | `GNOSTR_LISTEN` | — | Listen multiaddrs when running on a public host |
 | `GNOSTR_LISTEN_FILE` / `GNOSTR_BOOTSTRAP_FILE` | — | File holding the multiaddr value. Windows git-bash (MSYS2) rewrites env *values* that look like POSIX paths when spawning native node — no exclude switch covers env vars. Stage the multiaddr in a file (a native path survives) and pass these; the file wins over the env var. Read at node startup in `src/node.js` |
 | `REBOOTSTRAP_SECS` | `60` | Re-dial unconnected bootstrap peers every N s (0 disables) |
+| `GNOSTR_RENDEZVOUS_SERVER` | — | `1` = run the rendezvous directory (`/ipfs-agentd/rendezvous/1.0.0`) on this node. Long-lived daemons/witnesses only |
+| `GNOSTR_RENDEZVOUS_SERVERS` | — | Comma-separated rendezvous server multiaddrs the client registers/discovers through |
+| `GNOSTR_RENDEZVOUS_TTL` | `1800` | Registration TTL (s) |
+| `GNOSTR_RENDEZVOUS_DISCOVER_MS` | `15000` | Discover+re-dial topic peers this often |
+| `GNOSTR_PX` | on | `0` disables gossipsub peer-exchange answers (every fleet node is a potential bootstrapper for the mesh) |
+
+Rendezvous: gossipsub has no topic lookup — you cannot ask "who is on gnostr?"
+without already knowing a member. Any node that sets `GNOSTR_RENDEZVOUS_SERVER=1`
+is a directory: peers `join(topic)` (register their addrs under the topic, then
+discover and dial other members every `GNOSTR_RENDEZVOUS_DISCOVER_MS`), so the
+mesh forms deterministically instead of by dial luck. The chat CLI joins the
+topic's namespace automatically; CI witnesses run the server and responders
+learn it from the witness-dial envelope.
 
 ## Notes / limits
 

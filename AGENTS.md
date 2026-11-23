@@ -115,6 +115,21 @@ needs to speak to the daemon:
   messages without a mutually reachable rendezvous (a public relay subscriber
   or a shared helia-ipfs-relay `server.js` host). Relay reservations make
   nodes *dialable*; they do not bridge gossipsub meshes.
+- **Rendezvous (`src/rendezvous.js`):** gossipsub has no topic lookup, so
+  `ipfs-agentd` ships its own directory protocol (`/ipfs-agentd/rendezvous/1.0.0`).
+  `GNOSTR_RENDEZVOUS_SERVER=1` makes a node the directory; every node's client
+  (`GNOSTR_RENDEZVOUS_SERVERS` or `addServer()`) joins chat namespaces and
+  discovers/dials topic peers on a timer. CI witnesses run the server;
+  responders learn it from the witness-dial envelope. `test/rendezvous-e2e.mjs`
+  covers it end to end.
+- **libp2p 3.5.1 stream facts (hard-won — do not rediscover):** protocol
+  handlers are called as `handler(stream, connection)`, NOT with an
+  `{stream, connection}` object. Streams have no `sink()`/`source()` — write
+  with `stream.send(bytes)`, read by async-iterating the stream, close with
+  `stream.close()` (`closeWrite` does not exist at runtime). Dial direct
+  addrs WITHOUT the trailing `/p2p/<id>` (the transport matcher rejects
+  suffixed addrs; `getMultiaddrs()` already includes the suffix — don't add
+  it twice); circuit addrs keep theirs.
 - **Docker:** `Dockerfile` is all-in-one (web service is the default CMD;
   override `command:` for daemon/chat). One container = one instance; repos
   are per-instance volume mounts at `/data/repos`. `ARG BASE`/`RUN_USER`
