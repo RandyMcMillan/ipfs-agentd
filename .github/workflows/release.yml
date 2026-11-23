@@ -132,9 +132,18 @@ jobs:
           # capture to a file, NOT a pipe: `| head -5` races the writer and
           # pipefail turns the writer's SIGPIPE into a leg failure (hit on
           # macOS arm64); a real crash must print its own evidence
-          if ! "./dist/$ASSET" --help > "$RUNNER_TEMP/smoke.out" 2>&1; then
-            echo "::error::binary exited $? — output:"
+          "./dist/$ASSET" --help > "$RUNNER_TEMP/smoke.out" 2>&1
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "::error::binary exited $rc — output follows:"
             cat "$RUNNER_TEMP/smoke.out"
+            echo "::error::binary diagnostics:"
+            file "./dist/$ASSET" || true
+            ls -la "./dist/$ASSET" || true
+            if [ "$RUNNER_OS" = "macOS" ]; then
+              codesign -dv --verbose=4 "./dist/$ASSET" 2>&1 | head -20 || true
+              xattr -l "./dist/$ASSET" || true
+            fi
             exit 1
           fi
           head -5 "$RUNNER_TEMP/smoke.out"
