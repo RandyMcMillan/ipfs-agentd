@@ -166,7 +166,7 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           generate_release_notes: true
-          fail_on_unmatched_tag: true
+          fail_on_unmatched_files: true
           files: |
             dist/ipfs-agentd-*
             dist/*.bundle
@@ -176,22 +176,31 @@ jobs:
   # package ships its bin wrappers (src/bin.js, git-remote-* helpers).
   npm:
     needs: [test, meta]
-    if: secrets.NPM_TOKEN != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write   # npm provenance
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
+      # secrets are not available in job-level `if:` — gate at step level instead
+      - name: Skip when NPM_TOKEN is not configured
+        if: env.NPM_TOKEN == ''
+        run: echo 'NPM_TOKEN secret not set — skipping npm publish'
       - uses: actions/checkout@v4
+        if: env.NPM_TOKEN != ''
         with:
           ref: ${{ needs.meta.outputs.tag }}
           fetch-depth: 1
       - uses: actions/setup-node@v4
+        if: env.NPM_TOKEN != ''
         with:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
-      - run: npm ci --no-audit --no-fund
+      - if: env.NPM_TOKEN != ''
+        run: npm ci --no-audit --no-fund
       - name: Publish to npm (provenance)
+        if: env.NPM_TOKEN != ''
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public --provenance

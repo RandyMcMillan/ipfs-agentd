@@ -212,7 +212,7 @@ URLs rendered).
   only. Inputs: `ref` (branch/tag, default master), `live_seconds` (publisher
   seed window), per-OS selects — `linux` (default; also runs the Docker peer
   leg), `windows`, `macos` — and the model-beam inputs `copilot` (default
-  off), `opencode_model`, `opencode_models`, `opencode_free`, `verbose`
+  off), `opencode_model`, `opencode_models`, `verbose`
   (streams the agents' full chat — thinking + logs — into the job log and
   step summary), `bump_on_pass` (see below). A publisher daemon seeds the repo bundle and
   re-announces it every 15s; an independent fetcher node proves the bundle by CID
@@ -236,15 +236,16 @@ URLs rendered).
       `opencode-catalog` job resolves the models in-workflow (the dispatch
       dropdown can't be populated from a live query): `opencode_models`
       (comma list → a leg per model) > `opencode_model` (single) >
-      `opencode_free` (default: live `opencode models` query, first 3 —
-      never hardcoded). **Configured: the repo's `OPENCODE` secret is an
-      OpenAI v1 key** — exposed as `OPENAI_API_KEY` with base
-      `https://api.openai.com/v1`, and the default query selects `openai/`
-      models (free-tagged first, else the cheapest). The steps also expose
-      the secret as `OPENROUTER_API_KEY` / `GEMINI_API_KEY` so explicit
-      `opencode_models` for [OpenRouter](https://openrouter.ai/keys) `:free`
-      or [Google AI Studio](https://aistudio.google.com) keys work by just
-      swapping the secret and the catalog grep (see the workflow comment).
+      default: live `opencode models` query, first 3 — never hardcoded.
+      **Configured: the repo's `OPENCODE` secret is an OpenCode Zen key**
+      (`oc_sk_…`, [opencode.ai/zen](https://opencode.ai/zen)) — exposed as
+      `OPENCODE_API_KEY` (base `https://opencode.ai/zen/v1`), and the default
+      query selects the Zen `opencode/` models (free-tagged first; `opencode-go/`
+      needs a separate GO subscription). The steps also expose the secret as
+      `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `GEMINI_API_KEY` so explicit
+      `opencode_models` for [OpenRouter](https://openrouter.ai/keys) `:free`,
+      [Google AI Studio](https://aistudio.google.com) or OpenAI keys work by
+      just swapping the secret and the catalog grep (see the workflow comment).
       Each leg has its own marker/artifact suffix (`-opencode-<model>`) and
       listen port (4017).
     Every matrix
