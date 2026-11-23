@@ -189,9 +189,18 @@ Workflows:
 - `docker.yml` — owns ALL image pushes to GHCR: `latest`+`:<sha>` on master,
   `:<tag>`+`latest` on `v*`, build-only on PRs (docker/metadata-action for
   tagging). release.yml does not push images.
-- `release.yml` — tag trigger (`v*`): test gate via the npm-test action, then
-  a GitHub release (softprops/action-gh-release). `resolve-tag` composite
-  resolves the dispatch input vs ref.
+- `release.yml` — tag trigger (`v*`): test gate via the npm-test action →
+  version guard (tag must equal package.json) → SEA binary matrix (native
+  ubuntu/windows/macos runners — macos-latest is arm64, named honestly) →
+  GitHub release (softprops/action-gh-release) attaching the binaries plus a
+  git bundle of the released commit; optional npm publish when NPM_TOKEN is
+  set. `resolve-tag` composite resolves the dispatch input vs ref. SEA
+  gotchas: the embedded script must be CJS — no top-level await anywhere in
+  the bundled tree (bin.js wraps its dispatch in async main() for exactly
+  this reason; an ESM sea-main SEGFAULTS at runtime on node 22 even though
+  --experimental-sea-config accepts it); sentinel fuse
+  NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2; dist/ + sea-* are
+  gitignored.
 - `interop.yml` — live interop on the real gnostr topic, `workflow_dispatch`
   only. Inputs: `ref` (branch/tag, default master), `live_seconds` (publisher
   seed window), per-OS selects (`linux` default — also runs the Docker peer leg,
