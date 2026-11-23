@@ -78,6 +78,10 @@ on:
         description: 'OpenCode leg: no explicit model -> query the live catalog for FREE models and matrix over them'
         type: boolean
         default: true
+      verbose:
+        description: 'Model beam: verbose agent chat — opencode streams --thinking + --print-logs; full transcripts land in the step summary'
+        type: boolean
+        default: false
 
 env:
   INTEROP_LIVE_SECS: ${{ github.event.inputs.live_seconds || '900' }}
@@ -511,8 +515,18 @@ jobs:
           HINT
 
           copilot --yolo --max-ai-credits 50 -p "$(cat "$RUNNER_TEMP/hint.md")" \
-            | tee "$RUNNER_TEMP/copilot.log" \
+            2>&1 | tee "$RUNNER_TEMP/copilot.log" \
             || echo "::warning::copilot CLI exited $? (auth/policy? see copilot.log)"
+
+          if [ "${{ inputs.verbose }}" = "true" ]; then
+            echo "<details><summary>copilot full output</summary>" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tr -d '\0' < "$RUNNER_TEMP/copilot.log" | head -c 60000 >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           echo "waiting for the witness verdict…"
           VERDICT=""
@@ -824,9 +838,25 @@ jobs:
           commands you ran and the responder's answer text.
           HINT
 
-          opencode run --standalone --model "${{ matrix.model }}" "$(cat "$RUNNER_TEMP/hint.md")" \
-            | tee "$RUNNER_TEMP/opencode.log" \
+          VERBOSE_ARGS=""
+          if [ "${{ inputs.verbose }}" = "true" ]; then
+            # --thinking: show thinking blocks; --print-logs: server logs to stderr
+            VERBOSE_ARGS="--thinking --print-logs"
+          fi
+          # shellcheck disable=SC2086
+          opencode run --standalone $VERBOSE_ARGS --model "${{ matrix.model }}" "$(cat "$RUNNER_TEMP/hint.md")" \
+            2>&1 | tee "$RUNNER_TEMP/opencode.log" \
             || echo "::warning::opencode CLI exited $? (auth/model? see opencode.log)"
+
+          if [ "${{ inputs.verbose }}" = "true" ]; then
+            echo "<details><summary>opencode (${{ matrix.model }}) full transcript — thinking + logs</summary>" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tr -d '\0' < "$RUNNER_TEMP/opencode.log" | head -c 60000 >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           echo "waiting for the witness verdict..."
           VERDICT=""
