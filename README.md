@@ -230,17 +230,19 @@ URLs rendered).
     - **copilot-chat** — GitHub Copilot CLI. **PAID → default off** (dispatch
       input `copilot`); needs a Copilot seat, free tier ~50 premium
       req/month, `--max-ai-credits 50` caps spend.
-    - **opencode-chat** — OpenCode CLI (`@opencode/cli`), free-first. An
+    - **opencode-chat** — OpenCode CLI (`@opencode/cli`). An
       `opencode-catalog` job resolves the models in-workflow (the dispatch
       dropdown can't be populated from a live query): `opencode_models`
       (comma list → a leg per model) > `opencode_model` (single) >
-      `opencode_free` (default: `opencode models | grep -i free`, first 3 —
-      the free list rotates weekly, so it's queried live, never hardcoded).
-      Auth: the repo's `OPENCODE` secret is exposed to the steps as
-      `OPENCODE_API_KEY`, `OPENROUTER_API_KEY` and `GEMINI_API_KEY` — free
-      keys: [OpenRouter](https://openrouter.ai/keys) (`:free` models, 50
-      req/day, 1,000 after a one-time $10), [Google AI Studio](https://aistudio.google.com)
-      (~1,500 req/day), or OpenCode Zen (no key, `opencode auth login`).
+      `opencode_free` (default: live `opencode models` query, first 3 —
+      never hardcoded). **Configured: the repo's `OPENCODE` secret is an
+      OpenAI v1 key** — exposed as `OPENAI_API_KEY` with base
+      `https://api.openai.com/v1`, and the default query selects `openai/`
+      models (free-tagged first, else the cheapest). The steps also expose
+      the secret as `OPENROUTER_API_KEY` / `GEMINI_API_KEY` so explicit
+      `opencode_models` for [OpenRouter](https://openrouter.ai/keys) `:free`
+      or [Google AI Studio](https://aistudio.google.com) keys work by just
+      swapping the secret and the catalog grep (see the workflow comment).
       Each leg has its own marker/artifact suffix (`-opencode-<model>`) and
       listen port (4017).
     Every matrix
