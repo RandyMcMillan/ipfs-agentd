@@ -228,10 +228,12 @@ Workflows:
   **opencode-chat** (OpenCode CLI — a dynamic matrix from the
   **opencode-catalog** job: `opencode_models` list > `opencode_model` single
   > default live `opencode models` query, first 3 — never hardcode;
-  the dispatch dropdown can't be populated from a query). Auth: the repo
-  `OPENCODE` secret IS AN OPENCODE ZEN KEY (`oc_sk_…`) — exposed as
-  `OPENCODE_API_KEY` (base `https://opencode.ai/zen/v1`); the default query
-  filters `^opencode/` (Zen free models, free-tagged first, else first 3;
+  the dispatch dropdown can't be populated from a query). Auth: documented
+  OpenCode CI sign-in — each opencode job exchanges the GitHub Actions OIDC
+  token for an opencode.ai/console token (audience `https://opencode.ai/console`)
+  and writes it to `OPENCODE_API_KEY` via `$GITHUB_ENV`; falls back to the
+  repo `OPENCODE` secret if the exchange fails. The default query filters
+  `^opencode/` (Zen free models, free-tagged first, else first 3;
   `opencode-go/` needs a GO subscription and is deliberately excluded).
   Probe the key: `curl https://opencode.ai/zen/v1/models -H "Authorization:
   Bearer $KEY"`. The secret is ALSO exposed as `OPENAI_API_KEY` /

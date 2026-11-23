@@ -237,11 +237,12 @@ URLs rendered).
       dropdown can't be populated from a live query): `opencode_models`
       (comma list → a leg per model) > `opencode_model` (single) >
       default: live `opencode models` query, first 3 — never hardcoded.
-      **Configured: the repo's `OPENCODE` secret is an OpenCode Zen key**
-      (`oc_sk_…`, [opencode.ai/zen](https://opencode.ai/zen)) — exposed as
-      `OPENCODE_API_KEY` (base `https://opencode.ai/zen/v1`), and the default
-      query selects the Zen `opencode/` models (free-tagged first; `opencode-go/`
-      needs a separate GO subscription). The steps also expose the secret as
+      **Configured: OpenCode auth is the documented CI sign-in** — each
+      opencode job exchanges the GitHub Actions OIDC token for an
+      [opencode.ai/console](https://opencode.ai/console) token and exports it
+      as `OPENCODE_API_KEY` (falling back to the repo `OPENCODE` secret), and
+      the default query selects the Zen `opencode/` models (free-tagged first;
+      `opencode-go/` needs a separate GO subscription). The steps also expose the secret as
       `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `GEMINI_API_KEY` so explicit
       `opencode_models` for [OpenRouter](https://openrouter.ai/keys) `:free`,
       [Google AI Studio](https://aistudio.google.com) or OpenAI keys work by

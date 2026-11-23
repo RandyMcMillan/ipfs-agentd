@@ -15,7 +15,7 @@
 #   GPG key        /mnt/agents/output/gpg/private.asc   (key 3B696CCB)
 #   SSH key        /mnt/agents/output/ssh/id_ed25519
 #   web root       $WEB_ROOT (default /mnt/agents/output/web-repos)
-set -u
+set -eu
 export PATH="/mnt/agents/opt/node-v22.23.5-linux-x64/bin:$PATH"
 
 REPO=/mnt/agents/ipfs-agentd
@@ -41,11 +41,24 @@ cd "$REPO" || exit 1
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
   echo ".git missing — grafting from origin"
   rm -rf /tmp/x-graft
-  git clone --depth 50 https://github.com/RandyMcMillan/ipfs-agentd /tmp/x-graft
+  cloned=""
+  for i in 1 2 3 4 5; do
+    if git clone --depth 50 https://github.com/RandyMcMillan/ipfs-agentd /tmp/x-graft; then
+      cloned=1; break
+    fi
+    echo "clone attempt $i failed — retrying in $((i*10))s"
+    sleep $((i*10))
+  done
+  [ -n "$cloned" ] || { echo "FATAL: clone failed 5 times"; exit 1; }
   mv /tmp/x-graft/.git "$REPO/.git"
   rm -rf /tmp/x-graft
 fi
 git fetch origin 2>/dev/null || true
+# a graft-time reset discards uncommitted work — keep a recoverable patch
+if ! git diff --quiet 2>/dev/null; then
+  git diff > /mnt/agents/output/pre-reset-backup.patch 2>/dev/null || true
+  echo "WARNING: uncommitted changes discarded (patch saved to output/pre-reset-backup.patch)"
+fi
 git reset --hard origin/master
 if git rev-parse --is-shallow-repository | grep -q true; then
   git fetch --unshallow origin || true
