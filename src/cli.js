@@ -36,6 +36,15 @@ export async function chatMain (argv = []) {
   }
 
   ctx.node.services.pubsub.subscribe(topic)
+  /* rendezvous discovery: register under the topic's namespace and keep
+   * dialing topic peers the rendezvous servers know — gossipsub then
+   * starts with real neighbors instead of mesh luck. Inert when no
+   * rendezvous server is configured. */
+  if (ctx.rendezvous) {
+    ctx.rendezvous.join(topic).then(
+      (n) => { if (n > 0) process.stdout.write(`gnostr peers via rendezvous: ${n} found — dialing\n`) },
+      () => {})
+  }
   ctx.node.services.pubsub.addEventListener('message', (evt) => {
     log(`pubsub message on "${evt.detail.topic}" from ${evt.detail.from.toString().slice(0, 16)} (${evt.detail.data.length}B)`, 'debug')
     if (evt.detail.topic !== topic) return

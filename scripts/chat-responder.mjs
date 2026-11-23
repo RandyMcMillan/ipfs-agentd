@@ -36,6 +36,13 @@ if (!marker) { process.stderr.write('responder: INTEROP_QUESTION_MARKER not set 
 const log = (m) => process.stderr.write('responder: ' + m + '\n')
 const ctx = await createAgentNode({ repoPath: mkdtempSync(join(tmpdir(), 'responder-')), log })
 ctx.node.services.pubsub.subscribe(topic)
+/* rendezvous: register under the topic's namespace; when a witness-dial
+ * envelope reveals a witness running GNOSTR_RENDEZVOUS_SERVER=1 we add it
+ * as a rendezvous server (see considerQuestion) so it can discover us and
+ * we can discover the asker. */
+if (ctx.rendezvous) {
+  ctx.rendezvous.join(topic).catch(() => {})
+}
 log(name + ' on "' + topic + '" — answering questions matching "' + marker + '"')
 
 /* Re-dial the boot bootstrap list every 10s (retry failures after 3s):
@@ -90,10 +97,12 @@ const dec = new TextDecoder()
  * answer straight back over the same connection — no pubsub mesh luck in
  * either direction. */
 const INTEROP_PROTO = '/ipfs-agentd/interop/1.0.0'
+/* libp2p v3 stream API: no sink()/source() — write with stream.send(), read
+ * by async-iterating the stream itself, close with stream.close(). */
 const readStreamJson = async (stream) => {
   const parts = []
   let len = 0
-  for await (const chunk of stream.source) {
+  for await (const chunk of stream) {
     const c = chunk instanceof Uint8Array ? chunk : (chunk.subarray ? chunk.subarray() : new Uint8Array(chunk))
     parts.push(c)
     len += c.length
@@ -105,11 +114,12 @@ const readStreamJson = async (stream) => {
 }
 const writeStreamJson = async (stream, payload) => {
   try {
-    await stream.sink([enc.encode(JSON.stringify(payload))])
-    stream.close()
+    stream.send(enc.encode(JSON.stringify(payload)))
+    await stream.close()
   } catch { try { stream.abort() } catch { /* gone */ } }
 }
-ctx.node.handle(INTEROP_PROTO, ({ stream }) => {
+/* libp2p 3.5.1 calls handlers as handler(stream, connection) */
+ctx.node.handle(INTEROP_PROTO, (stream) => {
   readStreamJson(stream).then((payload) => {
     if (payload?.kind === 'question' && typeof payload.text === 'string' && payload.text.includes(marker)) {
       log('question pushed directly by the witness — answering')
@@ -131,6 +141,9 @@ function considerQuestion (text) {
        * a bad one must not kill the responder. */
       let ma
       try { ma = multiaddr(a) } catch { continue }
+      /* the witness speaks the rendezvous protocol too — register with it
+       * so it discovers (and dials) us deterministically */
+      ctx.rendezvous?.addServer(a)
       ctx.node.dial(ma).then(
         () => log('dialed witness at ' + a.slice(0, 60) + '…'),
         (e) => log('witness dial failed: ' + (e?.message || e)))

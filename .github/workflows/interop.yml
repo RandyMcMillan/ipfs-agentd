@@ -378,7 +378,11 @@ jobs:
   # AND a responder-* answer — from a DIFFERENT libp2p peer. Bridge: the
   # witness uploads its relay multiaddrs as a run artifact (chat-bridge-<id>)
   # and each matrix leg's responder dials them directly — the public gnostr
-  # mesh alone does not reliably deliver between arbitrary runners. Select
+  # mesh alone does not reliably deliver between arbitrary runners. The
+  # witness ALSO runs a rendezvous server (GNOSTR_RENDEZVOUS_SERVER=1) and
+  # the responders register with it on connect, so the witness discovers
+  # and dials them directly — plus a direct-push stream protocol on those
+  # circuit connections — no pubsub mesh luck in either direction. Select
   # ≥2 OSes for a true cross-OS answer (the responder's platform is in its
   # answer text, surfaced in the job summary). NON-FATAL: the step reports
   # an orange check on failure (continue-on-error) — the job never goes red
@@ -458,6 +462,7 @@ jobs:
             CHAT_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }} \
             CHAT_ANSWER_PREFIX=responder- \
             CHAT_PUBLISHER_PREFIX=ipfs-agentd-ci-${{ github.run_id }}- \
+            GNOSTR_RENDEZVOUS_SERVER=1 \
             CHAT_DIAL=/ip4/127.0.0.1/tcp/4012 CHAT_TIMEOUT_MS=480000 \
             CHAT_ADDRS_FILE="$RUNNER_TEMP/chat-addrs" \
             node scripts/listen-chat.mjs >"$RUNNER_TEMP/witness.out" 2>"$RUNNER_TEMP/witness.log" &
@@ -841,6 +846,7 @@ jobs:
             CHAT_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-opencode-${{ env.slug }} \
             CHAT_ANSWER_PREFIX=responder- \
             CHAT_PUBLISHER_PREFIX=ipfs-agentd-ci-${{ github.run_id }}- \
+            GNOSTR_RENDEZVOUS_SERVER=1 \
             CHAT_DIAL=/ip4/127.0.0.1/tcp/4017 CHAT_TIMEOUT_MS=480000 \
             CHAT_ADDRS_FILE="$RUNNER_TEMP/chat-addrs" \
             node scripts/listen-chat.mjs >"$RUNNER_TEMP/witness.out" 2>"$RUNNER_TEMP/witness.log" &

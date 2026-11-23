@@ -20,6 +20,7 @@ import { unixfs } from '@helia/unixfs'
 import { ipns } from '@helia/ipns'
 import { helia as ipnsHelia, pubsub as ipnsPubsub } from '@helia/ipns/routing'
 import { multiaddr } from '@multiformats/multiaddr'
+import { startRendezvousServer, startRendezvousClient } from './rendezvous.js'
 import { tcp } from '@libp2p/tcp'
 import { webSockets } from '@libp2p/websockets'
 import { noise } from '@libp2p/noise'
@@ -72,7 +73,7 @@ export const DEFAULT_REPO = process.env.IPFS_AGENTD_REPO || join(homedir(), '.ip
  * agents are dialable through the swarm; dcutr then tries to upgrade relayed
  * connections to direct ones (real hole punching), autonat reports whether
  * the node is publicly dialable at all. */
-export async function createAgentNode ({ repoPath = DEFAULT_REPO, log = () => {} } = {}) {
+export async function createAgentNode ({ repoPath = DEFAULT_REPO, log = () => {}, rendezvousServer = process.env.GNOSTR_RENDEZVOUS_SERVER === '1', rendezvousServers = (process.env.GNOSTR_RENDEZVOUS_SERVERS || '').split(',').map((s) => s.trim()).filter(Boolean) } = {}) {
   log('repo: ' + repoPath)
   const blockstore = new FsBlockstore(join(repoPath, 'blocks'))
   const datastore = new FsDatastore(join(repoPath, 'data'))
@@ -95,7 +96,11 @@ export async function createAgentNode ({ repoPath = DEFAULT_REPO, log = () => {}
         ping: ping(),
         /* client mode: safe behind NAT; does not publish undialable DHT records */
         dht: kadDHT({ clientMode: true }),
-        pubsub: gossipsub({ emitSelf: true }),   /* agents see their own publishes in ipfs_pubsub_pull */
+        /* emitSelf: agents see their own publishes in ipfs_pubsub_pull;
+         * doPX: answer peer-exchange requests — every fleet node is a
+         * potential bootstrapper for the gnostr mesh, so prune events
+         * should hand the pruned peer other topic members */
+        pubsub: gossipsub({ emitSelf: true, doPX: process.env.GNOSTR_PX !== '0' }),
         autonat: autoNAT(),
         dcutr: dcutr()
       }
@@ -137,5 +142,13 @@ export async function createAgentNode ({ repoPath = DEFAULT_REPO, log = () => {}
   node.addEventListener('peer:connect', (e) => log('peer:connect ' + e.detail.toString() + ' (' + node.getPeers().length + ' peers)'))
   node.addEventListener('peer:disconnect', (e) => log('peer:disconnect ' + e.detail.toString()))
 
-  return { helia, node, ufs: unixfs(helia), ipns: namesys, repoPath }
+  /* rendezvous: topic-scoped peer discovery (see rendezvous.js). The
+   * client is inert until it knows a server; the server makes THIS node
+   * the directory (long-lived daemon/serve nodes set
+   * GNOSTR_RENDEZVOUS_SERVER=1). Components join() the namespaces they
+   * actually use (e.g. the chat topic). */
+  if (rendezvousServer) startRendezvousServer(node, { log })
+  const rendezvous = startRendezvousClient(node, { servers: rendezvousServers, log })
+
+  return { helia, node, ufs: unixfs(helia), ipns: namesys, repoPath, rendezvous }
 }

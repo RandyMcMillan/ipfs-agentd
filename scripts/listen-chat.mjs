@@ -49,6 +49,13 @@ const dials = (process.env.CHAT_DIAL || '').split(',').map((s) => s.trim()).filt
 const log = (m) => process.stderr.write('witness: ' + m + '\n')
 const ctx = await createAgentNode({ repoPath: mkdtempSync(join(tmpdir(), 'chat-witness-')), log })
 ctx.node.services.pubsub.subscribe(topic)
+/* with GNOSTR_RENDEZVOUS_SERVER=1 (workflow) we are the topic's directory:
+ * responders that learn our addrs register here, and our periodic discover
+ * dials them directly — relays and direct pushes reach them over real
+ * connections instead of saturated public meshes. */
+if (ctx.rendezvous) {
+  ctx.rendezvous.join(topic).catch(() => {})
+}
 /* CHAT_ADDRS_FILE: record our dialable relay addrs (comma-separated) as soon
  * as they exist — the workflow uploads the file as a run artifact so matrix
  * legs on OTHER runners can dial us directly (the public gnostr mesh alone
@@ -101,10 +108,12 @@ const out = new TextEncoder()
  * bridge artifact created (responders dial our relay addrs), bypassing
  * pubsub mesh membership entirely. */
 const INTEROP_PROTO = '/ipfs-agentd/interop/1.0.0'
+/* libp2p v3 stream API: no sink()/source() — write with stream.send(), read
+ * by async-iterating the stream itself, close with stream.close(). */
 const readStreamJson = async (stream) => {
   const parts = []
   let len = 0
-  for await (const chunk of stream.source) {
+  for await (const chunk of stream) {
     const c = chunk instanceof Uint8Array ? chunk : (chunk.subarray ? chunk.subarray() : new Uint8Array(chunk))
     parts.push(c)
     len += c.length
@@ -116,8 +125,8 @@ const readStreamJson = async (stream) => {
 }
 const writeStreamJson = async (stream, payload) => {
   try {
-    await stream.sink([out.encode(JSON.stringify(payload))])
-    stream.close()
+    stream.send(out.encode(JSON.stringify(payload)))
+    await stream.close()
   } catch { try { stream.abort() } catch { /* gone */ } }
 }
 
@@ -210,7 +219,8 @@ function checkPass (how) {
  * here; the connection's remotePeer is the responder's peer id, so the
  * different-peer proof still holds. */
 if (marker) {
-  ctx.node.handle(INTEROP_PROTO, ({ stream, connection }) => {
+  /* libp2p 3.5.1 calls handlers as handler(stream, connection) */
+  ctx.node.handle(INTEROP_PROTO, (stream, connection) => {
     readStreamJson(stream).then((payload) => {
       if (done || answer) return
       if (payload?.kind !== 'answer' || typeof payload.text !== 'string') return
