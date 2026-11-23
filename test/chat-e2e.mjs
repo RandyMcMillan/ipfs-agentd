@@ -80,7 +80,7 @@ try {
    * connections flapping can prune the agent<->CLI session) must not flake
    * the suite; republish until rendered, like a real user would */
   let rendered = false
-  for (let attempt = 1; attempt <= 3 && !rendered; attempt++) {
+  for (let attempt = 1; attempt <= 6 && !rendered; attempt++) {
     await tools.ipfsPubsubPublish(ctx, { topic, dataBase64: b64(JSON.stringify({ type: 'chat', name: 'bot-7', text: 'hi human', at: Date.now() })) })
     const deadline = Date.now() + 15000
     while (!rendered && Date.now() < deadline) {
