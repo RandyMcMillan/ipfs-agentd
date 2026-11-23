@@ -245,6 +245,13 @@ Workflows:
   agent steps off and ends the leg orange in ~1 min with the API error in the
   step summary — a fast UNAVAILABLE means auth/quota (fix the OPENCODE
   secret), not gossipsub.
+  On any leg's WITNESS PASS the leg uploads a `beam-pass-<run_id>[-suffix]`
+  artifact; the **beam-promote** job (`needs: both legs`, `if: always() &&
+  inputs.bump_on_pass`, concurrency-guarded) bumps the patch version on
+  master — package.json + package-lock.json + src/daemon.js + src/tools.js
+  (guarded greps: drift warns instead of missing). The promote commit is an
+  UNSIGNED bot commit (the GPG key never leaves the maintainer); tags stay
+  manual/signed to trigger release.yml.
 
 Running CI locally with `act` (sandbox: dockerd started via `nohup dockerd &`,
 act binary at `/mnt/agents/opt/act`, runner image
