@@ -273,3 +273,105 @@ jobs:
           node scripts/check-deployed-peer.mjs
         env:
           SITE_URL: https://randymcmillan.github.io/ipfs-agentd
+
+  # Proof of concept: can an AI agent with NO prior knowledge of this repo
+  # figure out its gossipsub chat and be HEARD on the live "gnostr" topic?
+  # GitHub Copilot CLI gets only a hint (read the repo, meet the requirements);
+  # our witness node (scripts/listen-chat.mjs) must then receive a valid chat
+  # envelope from it. NON-FATAL: the step reports an orange check on failure
+  # (continue-on-error) — the job never goes red for a Copilot hiccup.
+  # Local listening during a dispatch:
+  #   CHAT_TOPIC=gnostr node scripts/listen-chat.mjs
+  # Copilot auth: GITHUB_TOKEN + copilot-requests: write (org policy must
+  # allow Copilot CLI billed to the org); --max-ai-credits bounds the cost.
+  copilot-chat:
+    name: Copilot chat interop (hint-driven PoC)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      copilot-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - name: Node (.nvmrc via setup-node)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: npm ci (retry — registry/GitHub flakes)
+        run: |
+          for i in 1 2 3 4 5; do
+            npm ci --no-audit --no-fund && exit 0
+            echo "::warning::npm ci attempt $i failed — retrying in $((i*10))s"
+            sleep $((i*10))
+          done
+          exit 1
+
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot && copilot --version
+
+      - name: Copilot must figure out the gnostr chat — witness verifies
+        timeout-minutes: 12
+        continue-on-error: true   # PoC: orange on failure, never red
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          # witness first: subscribes to the real gnostr topic and dials
+          # 127.0.0.1:4012 (the hint makes Copilot's node listen there, so
+          # mesh formation is deterministic instead of swarm-luck)
+          CHAT_TOPIC=gnostr CHAT_FROM=copilot CHAT_NEEDLE=interop-ok \
+            CHAT_DIAL=/ip4/127.0.0.1/tcp/4012 CHAT_TIMEOUT_MS=480000 \
+            node scripts/listen-chat.mjs 2>"$RUNNER_TEMP/witness.log" &
+          WITNESS=$!
+
+          cat > "$RUNNER_TEMP/hint.md" <<'HINT'
+          You are an autonomous agent on a CI runner for the ipfs-agentd repo
+          (checked out at $GITHUB_WORKSPACE). Your task: make a chat message
+          from you appear on the LIVE IPFS gossipsub topic "gnostr", read by a
+          witness node that is already subscribed.
+
+          Everything you need to know is IN THIS REPO. Read README.md (the
+          "Chat CLI" and "Env" sections) and AGENTS.md before running anything.
+
+          The witness only counts a message that meets ALL of:
+            1. it is published on the "gnostr" topic
+            2. it is a JSON chat envelope in this repo's format, with
+               "name": "copilot"
+            3. "text" contains "interop-ok"
+            4. your sending node listens on /ip4/127.0.0.1/tcp/4012 (use the
+               GNOSTR_LISTEN env var) so the witness can dial it
+            5. the line is sent only AFTER your chat process has been on the
+               topic for at least 20 seconds (gossipsub needs time to graft a
+               mesh — a message published too early reaches no one), and the
+               sender then stays alive for at least 30 more seconds
+
+          You may see unrelated traffic on the topic — this repo's own CI
+          publishes git ads here. Ignore anything that is not your chat
+          message. Do not modify repo files. When done, report the exact
+          commands you ran.
+          HINT
+
+          copilot --yolo --max-ai-credits 50 -p "$(cat "$RUNNER_TEMP/hint.md")" \
+            | tee "$RUNNER_TEMP/copilot.log" \
+            || echo "::warning::copilot CLI exited $? (auth/policy? see copilot.log)"
+
+          echo "waiting for the witness verdict…"
+          if wait "$WITNESS"; then
+            echo "::notice::COPILOT CHAT INTEROP PASS — witness received copilot's envelope on gnostr"
+            echo "### Copilot chat interop — PASS" >> "$GITHUB_STEP_SUMMARY"
+            echo "Witness received a \`copilot\` chat envelope containing \`interop-ok\` on the live gnostr topic." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::COPILOT CHAT INTEROP FAIL — witness heard nothing (see witness.log / copilot.log)"
+            echo "### Copilot chat interop — FAIL (non-fatal PoC)" >> "$GITHUB_STEP_SUMMARY"
+            echo 'The witness received no qualifying envelope. Tail of witness.log:' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 30 "$RUNNER_TEMP/witness.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
