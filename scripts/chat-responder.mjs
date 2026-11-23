@@ -84,24 +84,56 @@ if (bootstraps.length) {
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
+
+/* Direct-push bridge: the witness pushes the question over INTEROP_PROTO on
+ * the circuit connection the artifact bridge created, and we push each
+ * answer straight back over the same connection — no pubsub mesh luck in
+ * either direction. */
+const INTEROP_PROTO = '/ipfs-agentd/interop/1.0.0'
+const readStreamJson = async (stream) => {
+  const parts = []
+  let len = 0
+  for await (const chunk of stream.source) {
+    const c = chunk instanceof Uint8Array ? chunk : (chunk.subarray ? chunk.subarray() : new Uint8Array(chunk))
+    parts.push(c)
+    len += c.length
+  }
+  const all = new Uint8Array(len)
+  let off = 0
+  for (const c of parts) { all.set(c, off); off += c.length }
+  return JSON.parse(new TextDecoder().decode(all))
+}
+const writeStreamJson = async (stream, payload) => {
+  try {
+    await stream.sink([enc.encode(JSON.stringify(payload))])
+    stream.close()
+  } catch { try { stream.abort() } catch { /* gone */ } }
+}
+ctx.node.handle(INTEROP_PROTO, ({ stream }) => {
+  readStreamJson(stream).then((payload) => {
+    if (payload?.kind === 'question' && typeof payload.text === 'string' && payload.text.includes(marker)) {
+      log('question pushed directly by the witness — answering')
+      considerQuestion(payload.text)
+    }
+  }, () => {})
+})
+
 let replies = 0
 let lastReply = 0
-ctx.node.services.pubsub.addEventListener('message', (evt) => {
-  if (evt.detail.topic !== topic) return
-  let msg
-  try { msg = JSON.parse(dec.decode(evt.detail.data)) } catch { return }
-  if (msg.type !== 'chat' || typeof msg.text !== 'string') return
-  if (!msg.text.includes(marker)) return
-  if (msg.name === name || String(msg.name).startsWith('responder-')) return   /* own echo / other responders */
+function considerQuestion (text) {
   /* "witness-dial <addrs>": the asker's witness node (another CI runner)
    * attached its relay multiaddrs — dial them so our answers reach it
    * deterministically instead of by public-swarm luck. */
-  const m = msg.text.match(/witness-dial ((?:\/\S+)+)/)
+  const m = text.match(/witness-dial ((?:\/\S+)+)/)
   if (m) {
     for (const a of m[1].split(/\s+/)) {
-      ctx.node.dial(multiaddr(a)).then(
+      /* multiaddrs in the envelope are unauthenticated public-topic data —
+       * a bad one must not kill the responder. */
+      let ma
+      try { ma = multiaddr(a) } catch { continue }
+      ctx.node.dial(ma).then(
         () => log('dialed witness at ' + a.slice(0, 60) + '…'),
-        (e) => log('witness dial failed: ' + e.message))
+        (e) => log('witness dial failed: ' + (e?.message || e)))
     }
   }
   /* one logical question per run (the marker): answer at most maxReplies
@@ -111,16 +143,31 @@ ctx.node.services.pubsub.addEventListener('message', (evt) => {
   if (now - lastReply < replyEveryMs) return
   lastReply = now
   replies++
-  const answer = {
-    type: 'chat',
-    name,
-    at: now,
-    text: 'answer from ' + name + ' (peer ' + ctx.node.peerId.toString().slice(0, 12) + '…, host ' + os.hostname() + '): ' +
-      'I run on ' + os.platform() + '/' + os.arch() + ' — matched "' + marker + '"'
-  }
+  const answerText = 'answer from ' + name + ' (peer ' + ctx.node.peerId.toString().slice(0, 12) + '…, host ' + os.hostname() + '): ' +
+    'I run on ' + os.platform() + '/' + os.arch() + ' — matched "' + marker + '"'
+  const answer = { type: 'chat', name, at: now, text: answerText }
   ctx.node.services.pubsub.publish(topic, enc.encode(JSON.stringify(answer))).then(
     () => log('answer ' + replies + '/' + maxReplies + ' published'),
-    (e) => log('answer publish failed: ' + e.message))
+    (e) => log('answer publish failed: ' + (e?.message || e)))
+  /* deterministic return path: the witness (and any other bridge peer) gets
+   * the answer over the direct connection, whatever the pubsub mesh does. */
+  const payload = { kind: 'answer', name, text: answerText }
+  for (const conn of ctx.node.getConnections()) {
+    if (!conn.remoteAddr.toString().includes('/p2p-circuit/')) continue
+    ctx.node.dialProtocol(conn.remotePeer, INTEROP_PROTO).then(
+      (stream) => writeStreamJson(stream, payload),
+      () => {})
+  }
+}
+
+ctx.node.services.pubsub.addEventListener('message', (evt) => {
+  if (evt.detail.topic !== topic) return
+  let msg
+  try { msg = JSON.parse(dec.decode(evt.detail.data)) } catch { return }
+  if (msg.type !== 'chat' || typeof msg.text !== 'string') return
+  if (!msg.text.includes(marker)) return
+  if (msg.name === name || String(msg.name).startsWith('responder-')) return   /* own echo / other responders */
+  considerQuestion(msg.text)
 })
 
 setTimeout(async () => {

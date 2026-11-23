@@ -23,6 +23,13 @@
  *  - After seeing the question, the witness also relays it 6× (10s apart)
  *    with its own relay multiaddrs attached ("witness-dial") as a fallback
  *    path for any responder that did not get bootstrapped.
+ *  - Direct-push bridge: a publish only reaches peers in OUR pubsub mesh,
+ *    and on the churny public swarm that mesh fills with random subscribers
+ *    — bridge-dialed responders may never receive the relay at all. Over
+ *    every /p2p-circuit connection both sides speak INTEROP_PROTO: the
+ *    witness pushes the question, responders push their answers back on
+ *    the same connections, so a formed artifact bridge gives a fully
+ *    deterministic Q&A path with no mesh luck in either direction.
  */
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -60,7 +67,12 @@ if (addrsFile) {
 }
 if (dials.length) {
   const dialAll = () => dials.forEach((d) => {
-    ctx.node.dial(multiaddr(d)).catch(() => {})
+    /* d comes from CHAT_DIAL or unauthenticated git ads on the public
+     * topic — multiaddr() throws synchronously on a bad addr, which would
+     * kill the witness; dial errors are async and safe to swallow. */
+    let ma
+    try { ma = multiaddr(d) } catch { return }
+    ctx.node.dial(ma).catch(() => {})
   })
   dialAll()
   setInterval(dialAll, 5000).unref()
@@ -83,7 +95,34 @@ setInterval(() => {
 
 const enc = new TextDecoder()
 const out = new TextEncoder()
+
+/* Direct-push bridge — see the header. The question and answers also travel
+ * as plain JSON over INTEROP_PROTO streams on the circuit connections the
+ * bridge artifact created (responders dial our relay addrs), bypassing
+ * pubsub mesh membership entirely. */
+const INTEROP_PROTO = '/ipfs-agentd/interop/1.0.0'
+const readStreamJson = async (stream) => {
+  const parts = []
+  let len = 0
+  for await (const chunk of stream.source) {
+    const c = chunk instanceof Uint8Array ? chunk : (chunk.subarray ? chunk.subarray() : new Uint8Array(chunk))
+    parts.push(c)
+    len += c.length
+  }
+  const all = new Uint8Array(len)
+  let off = 0
+  for (const c of parts) { all.set(c, off); off += c.length }
+  return JSON.parse(new TextDecoder().decode(all))
+}
+const writeStreamJson = async (stream, payload) => {
+  try {
+    await stream.sink([out.encode(JSON.stringify(payload))])
+    stream.close()
+  } catch { try { stream.abort() } catch { /* gone */ } }
+}
+
 let relayed = 0
+let pushTimer = null
 ctx.node.services.pubsub.addEventListener('message', (evt) => {
   if (evt.detail.topic !== topic) return
   let msg
@@ -123,19 +162,65 @@ ctx.node.services.pubsub.addEventListener('message', (evt) => {
             (e) => log('relay failed: ' + e.message))
         }, d).unref?.()
       }
+      /* direct-push bridge: also push the question over every circuit
+       * connection (the bridge-dialed responders) right away and every 10s
+       * until answered — a responder that connects late still gets it. */
+      pushQuestion()
+      pushTimer = setInterval(() => { if (!done) pushQuestion() }, 10000)
+      pushTimer.unref?.()
     } else if (String(msg.name).startsWith(answerPrefix) && !answer) {
       answer = { msg, fromPeer }
       log('ANSWER from ' + msg.name + ' (peer ' + fromPeer.slice(0, 12) + '…): ' + msg.text.slice(0, 160))
     }
-    if (question && answer && question.fromPeer !== answer.fromPeer) {
-      pass('witness heard the question AND a real answer from a different peer (' + answer.msg.name + ')')
-    }
+    checkPass('pubsub')
   } else if (!saw && msg.name === from && msg.text && msg.text.includes(needle)) {
     saw = { msg, fromPeer }
     log('heard envelope from ' + from + ' (peer ' + fromPeer.slice(0, 12) + '…): ' + msg.text.slice(0, 120))
     pass('witness received ' + from + '\'s envelope on ' + topic)
   }
 })
+
+/* Direct-push bridge: push the question over every circuit connection —
+ * the responders bridge-dialed our relay addrs, so those are the peers that
+ * matter. Negotiation failures are ignored (public peers don't speak
+ * INTEROP_PROTO). */
+function pushQuestion () {
+  if (done || !marker || !question) return
+  const addrs = ctx.node.getMultiaddrs().map(String).filter((a) => a.includes('/p2p-circuit'))
+  const payload = { kind: 'question', text: marker + ' witness-dial ' + addrs.join(' ') }
+  for (const conn of ctx.node.getConnections()) {
+    if (!conn.remoteAddr.toString().includes('/p2p-circuit/')) continue
+    const peer = conn.remotePeer
+    ctx.node.dialProtocol(peer, INTEROP_PROTO).then(
+      (stream) => {
+        writeStreamJson(stream, payload)
+        log('pushed the question directly to ' + peer.toString().slice(0, 12) + '…')
+      },
+      () => {})
+  }
+}
+
+function checkPass (how) {
+  if (question && answer && question.fromPeer !== answer.fromPeer) {
+    pass('witness heard the question AND a real answer from a different peer (' + answer.msg.name + ', via ' + how + ')')
+  }
+}
+
+/* Responders push their answers back over the same protocol — accept them
+ * here; the connection's remotePeer is the responder's peer id, so the
+ * different-peer proof still holds. */
+if (marker) {
+  ctx.node.handle(INTEROP_PROTO, ({ stream, connection }) => {
+    readStreamJson(stream).then((payload) => {
+      if (done || answer) return
+      if (payload?.kind !== 'answer' || typeof payload.text !== 'string') return
+      const fromPeer = connection.remotePeer.toString()
+      answer = { msg: { name: String(payload.name || answerPrefix + 'direct'), text: payload.text }, fromPeer }
+      log('ANSWER (direct) from ' + answer.msg.name + ' (peer ' + fromPeer.slice(0, 12) + '…): ' + payload.text.slice(0, 160))
+      checkPass('direct stream')
+    }, () => {})
+  })
+}
 
 let done = false
 async function pass (why) {
@@ -152,6 +237,10 @@ async function pass (why) {
 function fail (why) {
   if (done) return
   done = true
+  /* stdout too: the workflow's verdict loop greps witness.out for BOTH
+   * strings; stderr-only FAIL made every failure burn the full step
+   * timeout instead of exiting at the verdict. */
+  console.log('WITNESS FAIL: ' + why)
   console.error('WITNESS FAIL: ' + why)
   if (marker) {
     if (!question) console.error('  never saw a question from ' + from + ' containing "' + marker + '"')
