@@ -98,9 +98,8 @@ needs to speak to the daemon:
   Use absolute paths; run scripts through an explicit interpreter (`node x.js`)
   — packed/plugin sandboxes often mount files non-executable.
 - **Remote/HTTP clients:** bridge stdio↔SSE with any MCP proxy in front of
-  `src/mcp-server.js`. Not shipped; keep the daemon local — see README
-  "Roadmap" for why a hosted Kimi-plugin variant was rejected (hosted-only +
-  OAuth MCP), and only revisit if the privacy model changes.
+  `src/mcp-server.js`. Not shipped; keep the daemon local — only revisit if
+  the privacy model changes.
 - **gnostr git interop:** `git_publish_repo`/`git_fetch_bundle` speak the same
   ad format as helia-ipfs-relay (`{type:'git', name, at, bundle, addrs?}`).
   Adversarial settings: always the `gnostr://cid/<CID>` form — name discovery
@@ -251,4 +250,4 @@ Before building new capability here, check whether an installable plugin or
 skill already covers it: use the plugin system's skill/plugin search
 ("find skills") with keywords like `ipfs`, `mcp`, `libp2p`, `pinning`. Use
 what exists; only then extend `src/tools.js`. This repo deliberately ships a
-daemon + tools, not a Kimi plugin bundle (see README Roadmap).
+daemon + tools, not a hosted plugin bundle.
