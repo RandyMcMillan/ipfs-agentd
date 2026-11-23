@@ -188,10 +188,6 @@ URLs rendered).
 
 ## Roadmap
 
-- Phase 2 (skipped for now): Kimi plugin bundle. **Blocked by design**: Kimi custom
-  plugins are hosted-only and require a remote OAuth-authorized MCP endpoint — a stdio
-  `command` is rejected by validation. That contradicts the local-daemon-per-agent
-  model this project chose. Revisit only if a hosted bridge variant is ever wanted.
 - Phase 3 (done): git bridge — `git_publish_repo` / `git_fetch_bundle`, gnostr-wire-compatible.
 - Phase 4 (done): `ipfs-agentd` CLI binary — gossipsub topic chat (human ↔ agent ↔
   agent, shared `{type:'chat',name,text,at}` envelope) + `--logging` level flag.
