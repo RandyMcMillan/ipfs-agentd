@@ -116,6 +116,9 @@ jobs:
           cp "$(command -v node)" "dist/ipfs-agentd$EXT"
           npx postject "dist/ipfs-agentd$EXT" NODE_SEA_BLOB sea-prep.blob \
             --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+          # postject invalidates the copied binary's signature — macOS kills
+          # the binary on launch ("killed: 9") unless it is ad-hoc re-signed
+          if [ "$RUNNER_OS" = "macOS" ]; then codesign --sign - --force "dist/ipfs-agentd$EXT"; fi
           OS=$(node -p process.platform); ARCH=$(node -p process.arch)
           ASSET="ipfs-agentd-${TAG}-${OS}-${ARCH}${EXT}"
           mv "dist/ipfs-agentd$EXT" "dist/$ASSET"
