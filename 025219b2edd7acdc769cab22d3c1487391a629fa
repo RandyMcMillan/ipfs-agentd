@@ -1,0 +1,1 @@
+My e1b751f broke the docker build twice: cache exporter ref used env.IMAGE with the mixed-case owner (RandyMcMillan) — OCI repository names must be lowercase. Metadata-action tags already lowercased, which is why image pushes never hit this; cache refs bypass metadata-action. Hardcoded lowercase.
