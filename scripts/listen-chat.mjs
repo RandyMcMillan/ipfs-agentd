@@ -44,6 +44,14 @@ const marker = process.env.CHAT_QUESTION_MARKER || ''
 const answerPrefix = process.env.CHAT_ANSWER_PREFIX || 'responder-'
 const publisherPrefix = process.env.CHAT_PUBLISHER_PREFIX || ''
 const timeoutMs = Number(process.env.CHAT_TIMEOUT_MS || 10 * 60 * 1000)
+const startTime = Date.now()
+let deadline = startTime + timeoutMs
+/* post-question grace: slow agents sometimes publish the question in the
+ * LAST minute of the window — the relay(10×10s)+dial+answer dance then has
+ * zero room. On the first matching QUESTION, extend the deadline so at
+ * least GRACE_MS remain (observed live: question at T+7m42s of an 8-min
+ * window, WITNESS FAIL 18s later). */
+const GRACE_MS = Number(process.env.CHAT_ANSWER_GRACE_MS || 2 * 60 * 1000)
 const dials = (process.env.CHAT_DIAL || '').split(',').map((s) => s.trim()).filter(Boolean)
 
 const log = (m) => process.stderr.write('witness: ' + m + '\n')
@@ -155,6 +163,10 @@ ctx.node.services.pubsub.addEventListener('message', (evt) => {
     if (msg.name === from && !question) {
       question = { msg, fromPeer }
       log('QUESTION from ' + from + ' (peer ' + fromPeer.slice(0, 12) + '…): ' + msg.text.slice(0, 120))
+      if (Date.now() + GRACE_MS > deadline) {
+        deadline = Date.now() + GRACE_MS
+        log('question arrived late in the window — extending the deadline by the grace period so an answer has time')
+      }
       /* relay 10× (10s apart) with OUR dialable relay addrs attached: any
        * responder that catches one can dial back directly. Relay circuits
        * are short-lived (~1 min) and re-dial-prone, so one shot is not
@@ -262,4 +274,10 @@ function fail (why) {
   }
   process.exit(1)
 }
-setTimeout(() => fail('timed out after ' + timeoutMs + 'ms'), timeoutMs)
+setInterval(() => {
+  if (!done && Date.now() > deadline) {
+    const extended = deadline > startTime + timeoutMs
+    fail('timed out after ' + Math.round((Date.now() - startTime) / 1000) + 's' +
+      (extended ? ' (including the post-question grace window)' : ''))
+  }
+}, 5000)

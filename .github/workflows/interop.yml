@@ -270,6 +270,14 @@ jobs:
             cat "$INTEROP_OUT/publisher.log"
           fi
 
+          # responder diagnostics: the legs' witness logs name what they saw;
+          # without this tail the responder side is a black box (a leg once
+          # failed with "never saw an answer" and there was no way to tell
+          # whether the responder heard the question at all)
+          echo '::group::responder.log (tail)'
+          tail -n 80 "$INTEROP_OUT/responder.log" 2>/dev/null || echo '(no responder.log)'
+          echo '::endgroup::'
+
       - name: Docker peer — build image
         if: matrix.docker
         timeout-minutes: 15
@@ -484,7 +492,7 @@ jobs:
             CHAT_ANSWER_PREFIX=responder- \
             CHAT_PUBLISHER_PREFIX=ipfs-agentd-ci-${{ github.run_id }}- \
             GNOSTR_RENDEZVOUS_SERVER=1 \
-            CHAT_DIAL=/ip4/127.0.0.1/tcp/4012 CHAT_TIMEOUT_MS=480000 \
+            CHAT_DIAL=/ip4/127.0.0.1/tcp/4012 CHAT_TIMEOUT_MS=600000 \
             CHAT_ADDRS_FILE="$RUNNER_TEMP/chat-addrs" \
             node scripts/listen-chat.mjs >"$RUNNER_TEMP/witness.out" 2>"$RUNNER_TEMP/witness.log" &
           echo $! > "$RUNNER_TEMP/witness.pid"
@@ -855,7 +863,7 @@ jobs:
             CHAT_ANSWER_PREFIX=responder- \
             CHAT_PUBLISHER_PREFIX=ipfs-agentd-ci-${{ github.run_id }}- \
             GNOSTR_RENDEZVOUS_SERVER=1 \
-            CHAT_DIAL=/ip4/127.0.0.1/tcp/4017 CHAT_TIMEOUT_MS=480000 \
+            CHAT_DIAL=/ip4/127.0.0.1/tcp/4017 CHAT_TIMEOUT_MS=600000 \
             CHAT_ADDRS_FILE="$RUNNER_TEMP/chat-addrs" \
             node scripts/listen-chat.mjs >"$RUNNER_TEMP/witness.out" 2>"$RUNNER_TEMP/witness.log" &
           echo $! > "$RUNNER_TEMP/witness.pid"
