@@ -1,0 +1,1 @@
+User directive: 'disable the fail non fatal - this is a critical test now'. All continue-on-error flipped to false; git-remote-gnostr clone leg fails the step instead of warning. Side effect: pre-existing orange failures in the OpenCode legs went red — that is the point.
