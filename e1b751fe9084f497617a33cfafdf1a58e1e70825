@@ -1,0 +1,1 @@
+Decision (user: 'decide which is best'): registry buildcache on docker.yml survives GHA cache eviction (10GB LRU, 7-day expiry); interop's plain docker build had NO cache at all — now buildx --load with the shared gha cache. A plain 'docker pull' first would NOT have worked: buildx docker-container driver ignores the local image store.
