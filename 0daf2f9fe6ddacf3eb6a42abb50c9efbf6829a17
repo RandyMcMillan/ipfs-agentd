@@ -1,0 +1,1 @@
+Why: stacked pushes queued model legs ~6 min behind the previous run's legs; questions landed after the responder's window closed (run 45419388460). Concurrency group cancels superseded runs so legs always start fresh. Also surfaces bridge-writer.log + responder.log in the Live window step — before this, both were black boxes after step end.
