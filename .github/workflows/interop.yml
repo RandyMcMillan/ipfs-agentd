@@ -41,13 +41,12 @@ on:
       # dispatch dropdown itself CANNOT be populated from a query; the
       # catalog job below does it in-workflow and feeds a dynamic matrix.
       #
-      # CURRENTLY CONFIGURED: OpenCode auth is the documented CI sign-in —
-      # a GitHub Actions OIDC token exchanged for an opencode.ai/console
-      # token (client_id from the OPENCODE_CLIENT_ID repo variable — the
-      # hardcoded literal was removed after GitHub secret scanning flagged
-      # it (security/secret-scanning/1); audience https://opencode.ai/console),
-      # written to OPENCODE_API_KEY in every opencode job. Falls back to the
-      # OPENCODE repo secret if the exchange fails. The default free query
+      # CURRENTLY CONFIGURED: OpenCode auth is the OPENCODE repo secret —
+      # an opencode.ai/console token written to OPENCODE_API_KEY in every
+      # opencode job. (The earlier OIDC token-exchange sign-in and its
+      # client_id were removed after GitHub secret scanning flagged the
+      # client_id — security/secret-scanning/1; no repo variable needed.
+      # Rotate by updating the OPENCODE secret.) The default free query
       # selects opencode/ models (the Zen provider's `*-free` ids;
       # opencode-go/ models need a separate GO subscription — excluded).
       # Probe the key:
@@ -586,7 +585,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      id-token: write   # OpenCode sign-in (OIDC token exchange)
       contents: read
     outputs:
       models: ${{ steps.resolve.outputs.models }}
@@ -603,38 +601,23 @@ jobs:
       - name: Install OpenCode CLI
         run: npm install -g @opencode/cli && opencode --version
 
-      # AUTH: GitHub Actions OIDC token -> opencode.ai/console token
-      # exchange (the documented OpenCode CI sign-in). Writes
-      # OPENCODE_API_KEY to $GITHUB_ENV for every later step in THIS job;
-      # falls back to the OPENCODE repo secret when the exchange fails.
+      # AUTH: the OPENCODE repo secret IS the opencode.ai/console token.
+      # (The OIDC token-exchange sign-in and its client_id were removed after
+      # GitHub secret scanning flagged the client_id — secret-scanning/1.
+      # No repo variable needed; rotate by updating the OPENCODE secret.)
+      # Writes OPENCODE_API_KEY to $GITHUB_ENV for every later step in
+      # THIS job.
       - name: Sign in to OpenCode
         env:
-          AUDIENCE: https://opencode.ai/console
-          OPENCODE_CLIENT_ID: ${{ vars.OPENCODE_CLIENT_ID }}
+          OPENCODE_TOKEN: ${{ secrets.OPENCODE }}
         run: |
           set -u
-          token=""
-          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-            oidc=$(curl -sSf --max-time 30 --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" | jq -r .value) || oidc=""
-            if [ -n "$oidc" ]; then
-              token=$(curl -sSf --max-time 30 https://opencode.ai/console/auth/oauth/token \
-                -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
-                -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
-                -d client_id="$OPENCODE_CLIENT_ID" \
-                -d subject_token="$oidc" | jq -r .access_token) || token=""
-            fi
-          fi
-          if [ -z "$token" ]; then
-            echo "::warning::OpenCode OIDC exchange failed — falling back to the OPENCODE repo secret"
-            token='${{ secrets.OPENCODE }}'
-          fi
-          echo "::add-mask::$token"
-          echo "OPENCODE_API_KEY=$token" >> "$GITHUB_ENV"
+          echo "::add-mask::$OPENCODE_TOKEN"
+          echo "OPENCODE_API_KEY=$OPENCODE_TOKEN" >> "$GITHUB_ENV"
 
       - id: resolve
-        # OPENCODE_API_KEY arrives via $GITHUB_ENV (OIDC exchange above) —
-        # do NOT set it here or it would override the exchanged token. The
+        # OPENCODE_API_KEY arrives via $GITHUB_ENV (sign-in step above) —
+        # do NOT set it here or it would override it. The
         # other provider names stay so a swapped secret keeps working.
         env:
           OPENAI_API_KEY: ${{ secrets.OPENCODE }}
@@ -698,7 +681,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      id-token: write   # OpenCode sign-in (OIDC token exchange)
       contents: read
     strategy:
       fail-fast: false
@@ -728,33 +710,16 @@ jobs:
       - name: Install OpenCode CLI
         run: npm install -g @opencode/cli && opencode --version
 
-      # same OIDC sign-in as opencode-catalog — $GITHUB_ENV is per-job, so
-      # every matrix leg exchanges its own token (OPENCODE_API_KEY flows to
-      # the preflight and agent steps; do NOT set it in step env)
+      # same secret-based sign-in as opencode-catalog — $GITHUB_ENV is
+      # per-job, so every matrix leg writes its own OPENCODE_API_KEY (flows
+      # to the preflight and agent steps; do NOT set it in step env)
       - name: Sign in to OpenCode
         env:
-          AUDIENCE: https://opencode.ai/console
-          OPENCODE_CLIENT_ID: ${{ vars.OPENCODE_CLIENT_ID }}
+          OPENCODE_TOKEN: ${{ secrets.OPENCODE }}
         run: |
           set -u
-          token=""
-          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-            oidc=$(curl -sSf --max-time 30 --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" | jq -r .value) || oidc=""
-            if [ -n "$oidc" ]; then
-              token=$(curl -sSf --max-time 30 https://opencode.ai/console/auth/oauth/token \
-                -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
-                -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
-                -d client_id="$OPENCODE_CLIENT_ID" \
-                -d subject_token="$oidc" | jq -r .access_token) || token=""
-            fi
-          fi
-          if [ -z "$token" ]; then
-            echo "::warning::OpenCode OIDC exchange failed — falling back to the OPENCODE repo secret"
-            token='${{ secrets.OPENCODE }}'
-          fi
-          echo "::add-mask::$token"
-          echo "OPENCODE_API_KEY=$token" >> "$GITHUB_ENV"
+          echo "::add-mask::$OPENCODE_TOKEN"
+          echo "OPENCODE_API_KEY=$OPENCODE_TOKEN" >> "$GITHUB_ENV"
 
       # cheap gate BEFORE the witness starts: a doomed leg must fail fast
       # (~1 min, orange) with the API error visible, not burn the full
@@ -872,8 +837,8 @@ jobs:
         if: steps.preflight.outputs.callable == 'true'
         timeout-minutes: 12
         continue-on-error: true   # PoC: orange on failure, never red
-        # OPENCODE_API_KEY arrives via $GITHUB_ENV (OIDC exchange in the
-        # sign-in step) — do NOT set it here. The other provider names stay
+        # OPENCODE_API_KEY arrives via $GITHUB_ENV (sign-in step) —
+        # do NOT set it here. The other provider names stay
         # so explicit opencode_models for those providers work
         env:
           OPENAI_API_KEY: ${{ secrets.OPENCODE }}
