@@ -132,7 +132,7 @@ jobs:
           echo "matrix: $include"
 
   live-interop:
-    needs: matrix
+    needs: [matrix, opencode-catalog]
     if: needs.matrix.outputs.include != '[]'
     permissions:
       contents: read
@@ -330,11 +330,38 @@ jobs:
       - name: Live window — publisher keeps seeding (external confirmation open)
         if: runner.os != 'Windows'   # windows already waited out the window in the merged step
         timeout-minutes: 25
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_LEGS: ${{ needs.opencode-catalog.outputs.models }}
         run: |
           echo "::notice::LIVE name=$NAME bundle=$CID peer=$PEER — ad on gnostr topic, seeding for ${{ env.INTEROP_LIVE_SECS }}s total"
           echo "tail of publisher log:"
           tail -5 "$INTEROP_OUT/publisher.log"
-          while kill -0 "$(cat "$INTEROP_OUT/pub.pid")" 2>/dev/null; do sleep 15; done
+          # early exit: the window exists for the model legs — once every
+          # catalog leg has uploaded beam-pass-<run_id>-*, nobody needs the
+          # seed anymore (a full-pass run ends in ~5 min, not 10+). Failed
+          # legs upload nothing, so a partial house still waits the window
+          # out — the responder stays reachable for stragglers.
+          EXPECTED=$(printf '%s' "$EXPECTED_LEGS" | python3 -c 'import json,sys
+          try: print(len(json.load(sys.stdin)))
+          except Exception: print(0)')
+          echo "expecting $EXPECTED model-leg pass artifact(s)"
+          while kill -0 "$(cat "$INTEROP_OUT/pub.pid")" 2>/dev/null; do
+            if [ "$EXPECTED" -gt 0 ]; then
+              PASSES=$(curl -s --max-time 20 -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
+                | python3 -c 'import json,sys
+          try:
+              print(sum(1 for a in json.load(sys.stdin).get("artifacts",[]) if a["name"].startswith("beam-pass-${{ github.run_id }}")))
+          except Exception: print(0)')
+              if [ "$PASSES" -ge "$EXPECTED" ]; then
+                echo "::notice::all $EXPECTED model legs PASS — closing the live window early"
+                kill "$(cat "$INTEROP_OUT/pub.pid")" 2>/dev/null || true
+                break
+              fi
+            fi
+            sleep 15
+          done
           echo "publisher exited — full log:"
           cat "$INTEROP_OUT/publisher.log"
           echo '::group::bridge writer log (witness addr feed)'
