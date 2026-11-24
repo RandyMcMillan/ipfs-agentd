@@ -43,7 +43,9 @@ on:
       #
       # CURRENTLY CONFIGURED: OpenCode auth is the documented CI sign-in —
       # a GitHub Actions OIDC token exchanged for an opencode.ai/console
-      # token (client_id sk_0439fe33-…, audience https://opencode.ai/console),
+      # token (client_id from the OPENCODE_CLIENT_ID repo variable — the
+      # hardcoded literal was removed after GitHub secret scanning flagged
+      # it (security/secret-scanning/1); audience https://opencode.ai/console),
       # written to OPENCODE_API_KEY in every opencode job. Falls back to the
       # OPENCODE repo secret if the exchange fails. The default free query
       # selects opencode/ models (the Zen provider's `*-free` ids;
@@ -608,6 +610,7 @@ jobs:
       - name: Sign in to OpenCode
         env:
           AUDIENCE: https://opencode.ai/console
+          OPENCODE_CLIENT_ID: ${{ vars.OPENCODE_CLIENT_ID }}
         run: |
           set -u
           token=""
@@ -618,7 +621,7 @@ jobs:
               token=$(curl -sSf --max-time 30 https://opencode.ai/console/auth/oauth/token \
                 -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
                 -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
-                -d client_id=sk_0439fe33-4c8b-414a-b382-1579b3daf180 \
+                -d client_id="$OPENCODE_CLIENT_ID" \
                 -d subject_token="$oidc" | jq -r .access_token) || token=""
             fi
           fi
@@ -731,6 +734,7 @@ jobs:
       - name: Sign in to OpenCode
         env:
           AUDIENCE: https://opencode.ai/console
+          OPENCODE_CLIENT_ID: ${{ vars.OPENCODE_CLIENT_ID }}
         run: |
           set -u
           token=""
@@ -741,7 +745,7 @@ jobs:
               token=$(curl -sSf --max-time 30 https://opencode.ai/console/auth/oauth/token \
                 -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
                 -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
-                -d client_id=sk_0439fe33-4c8b-414a-b382-1579b3daf180 \
+                -d client_id="$OPENCODE_CLIENT_ID" \
                 -d subject_token="$oidc" | jq -r .access_token) || token=""
             fi
           fi
