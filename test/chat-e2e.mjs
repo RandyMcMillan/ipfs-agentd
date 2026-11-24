@@ -91,7 +91,17 @@ try {
     await new Promise((r) => setTimeout(r, 2000))
   }
   let rendered = false
-  for (let attempt = 1; attempt <= 6 && !rendered; attempt++) {
+  for (let attempt = 1; attempt <= 10 && !rendered; attempt++) {
+    /* re-verify mesh membership before every publish — under full-suite load
+     * the graft can be pruned between the gate above and the publish, and
+     * gossipsub drops publishes to peers no longer in our mesh */
+    if (cliPeerId) {
+      const peers = ctx.node.services.pubsub.getPeers().map(String)
+      if (!peers.includes(cliPeerId)) {
+        try { await ctx.node.dial(multiaddr(listen.find((a) => a.includes(cliPeerId)))) } catch { /* best effort */ }
+        await new Promise((r) => setTimeout(r, 2000))
+      }
+    }
     await tools.ipfsPubsubPublish(ctx, { topic, dataBase64: b64(JSON.stringify({ type: 'chat', name: 'bot-7', text: 'hi human', at: Date.now() })) })
     const deadline = Date.now() + 15000
     while (!rendered && Date.now() < deadline) {
