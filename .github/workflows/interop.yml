@@ -247,7 +247,7 @@ jobs:
           echo '::group::git-remote-gnostr interop (real CLI helper clone)'
           # the helper is ESM — copying it off its repo breaks module resolution,
           # so shim it: a PATH-visible wrapper execs the real script in /tmp/relay.
-          # non-fatal: the live window must open even if this leg regresses.
+          # fatal: this clone-through-gnostr leg is part of the critical path.
           CLONE_DIR=$(mktemp -d)
           git clone -q https://github.com/RandyMcMillan/helia-ipfs-relay /tmp/relay && \
           (cd /tmp/relay && npm install --no-audit --no-fund) && \
@@ -259,8 +259,7 @@ jobs:
             timeout 300 git clone "gnostr://cid/$CID" "$CLONE_DIR" && \
           test -f "$CLONE_DIR/package.json" && \
           test -f "$CLONE_DIR/src/mcp-server.js" && \
-          git -C "$CLONE_DIR" log --oneline | head -5 \
-          || echo "::warning::git-remote-gnostr helper clone leg failed (non-fatal)"
+          git -C "$CLONE_DIR" log --oneline | head -5
           echo '::endgroup::'
 
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -413,9 +412,8 @@ jobs:
   # and dials them directly — plus a direct-push stream protocol on those
   # circuit connections — no pubsub mesh luck in either direction. Select
   # ≥2 OSes for a true cross-OS answer (the responder's platform is in its
-  # answer text, surfaced in the job summary). NON-FATAL: the step reports
-  # an orange check on failure (continue-on-error) — the job never goes red
-  # for a Copilot hiccup.
+  # answer text, surfaced in the job summary). FATAL: a failure here fails
+  # the job and the run.
   # Local listening during a dispatch:
   #   CHAT_TOPIC=gnostr node scripts/listen-chat.mjs
   # Copilot auth: GITHUB_TOKEN + copilot-requests: write (org policy must
@@ -476,7 +474,7 @@ jobs:
 
       - name: Record leg as unavailable (preflight failed)
         if: steps.preflight.outputs.callable != 'true'
-        continue-on-error: true   # orange, not red — the rest of the leg skips
+        continue-on-error: false   # fatal — the run goes red on failure
         run: |
           echo "### Copilot chat interop — UNAVAILABLE" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -502,7 +500,7 @@ jobs:
 
       - name: Upload chat bridge addrs (artifact for the matrix legs)
         if: always() && steps.preflight.outputs.callable == 'true'
-        continue-on-error: true   # bridge is best-effort; legs fall back
+        continue-on-error: false   # bridge upload is critical — fatal on failure
         uses: actions/upload-artifact@v4
         with:
           name: chat-bridge-${{ github.run_id }}
@@ -512,7 +510,7 @@ jobs:
         id: agent
         if: steps.preflight.outputs.callable == 'true'
         timeout-minutes: 12
-        continue-on-error: true   # PoC: orange on failure, never red
+        continue-on-error: false   # fatal on failure
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -602,7 +600,7 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::warning::COPILOT CHAT INTEROP FAIL — witness saw no valid Q&A (see witness.log / copilot.log)"
-            echo "### Copilot chat interop — FAIL (non-fatal PoC)" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Copilot chat interop — FAIL" >> "$GITHUB_STEP_SUMMARY"
             echo 'The witness received no qualifying question+answer pair. Tail of witness.log:' >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/witness.log" >> "$GITHUB_STEP_SUMMARY"
@@ -836,7 +834,7 @@ jobs:
 
       - name: Record leg as unavailable (preflight failed)
         if: steps.preflight.outputs.callable != 'true'
-        continue-on-error: true   # orange, not red — the rest of the leg skips
+        continue-on-error: false   # fatal — the run goes red on failure
         run: |
           echo "### OpenCode chat interop — ${{ matrix.model }} — UNAVAILABLE" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -873,7 +871,7 @@ jobs:
 
       - name: Upload chat bridge addrs (artifact for the matrix legs)
         if: always() && steps.preflight.outputs.callable == 'true'
-        continue-on-error: true   # bridge is best-effort; legs fall back
+        continue-on-error: false   # bridge upload is critical — fatal on failure
         uses: actions/upload-artifact@v4
         with:
           name: chat-bridge-${{ github.run_id }}-opencode-${{ env.slug }}
@@ -883,7 +881,7 @@ jobs:
         id: agent
         if: steps.preflight.outputs.callable == 'true'
         timeout-minutes: 12
-        continue-on-error: true   # PoC: orange on failure, never red
+        continue-on-error: false   # fatal on failure
         # OPENCODE_API_KEY arrives via $GITHUB_ENV (sign-in step) —
         # do NOT set it here. The other provider names stay
         # so explicit opencode_models for those providers work
@@ -985,7 +983,7 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::warning::OPENCODE CHAT INTEROP FAIL -- witness saw no valid Q&A (see witness.log / opencode.log)"
-            echo "### OpenCode chat interop -- ${{ matrix.model }} -- FAIL (non-fatal PoC)" >> "$GITHUB_STEP_SUMMARY"
+            echo "### OpenCode chat interop -- ${{ matrix.model }} -- FAIL" >> "$GITHUB_STEP_SUMMARY"
             echo 'The witness received no qualifying question+answer pair. Tail of witness.log:' >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/witness.log" >> "$GITHUB_STEP_SUMMARY"
