@@ -530,31 +530,26 @@ jobs:
           another live node — a "responder" run by this project's CI on
           another runner (possibly a different OS).
 
-          Everything you need to know is IN THIS REPO. Read README.md (the
-          "Chat CLI" and "Env" sections) and AGENTS.md before running anything.
+          Everything you need is IN THIS REPO. The repo ships a ready-made
+          asker — scripts/interop-ask.mjs — that implements the whole
+          protocol (topic join, mesh settle, publish, keepalive, answer
+          capture). Run it with EXACTLY these env vars:
 
-          The witness on this runner only counts an exchange that meets ALL of:
-            1. your question is published on the "gnostr" topic as a JSON chat
-               envelope in this repo's format, with "name": "copilot"
-            2. its "text" contains "gnostr-interop-question-${{ github.run_id }}"
-               and asks something only another live node can answer — e.g.
-               what platform/architecture and hostname it runs on
-            3. your sending node listens on /ip4/127.0.0.1/tcp/4012 (use the
-               GNOSTR_LISTEN env var) so the witness can dial it
-            4. the question is sent only AFTER your chat process has been on
-               the topic for at least 20 seconds (gossipsub needs time to
-               graft a mesh — a message published too early reaches no one)
-            5. after sending, keep your node alive and listening for at least
-               90 more seconds. A responder will answer on the same topic with
-               "name" starting "responder-". Copy the FULL text of the FIRST
-               responder envelope you see into your final report verbatim —
-               that text is the real cross-instance answer.
+            INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }} \
+            CHAT_FROM=copilot \
+            GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4012 \
+            node scripts/interop-ask.mjs
 
-          You may see unrelated traffic on the topic — this repo's own CI
-          publishes git ads here, and the witness relays your question.
-          Ignore anything that is not your chat question or a responder
-          answer. Do not modify repo files. When done, report the exact
-          commands you ran and the responder's answer text.
+          It prints the FIRST responder answer's full text to stdout —
+          copy that line into your final report verbatim; it is the real
+          cross-instance answer. It exits 0 when answered. If it exits 1
+          (no answer in 120s), run it again once.
+
+          You may read README.md and AGENTS.md for background, but do NOT
+          hand-write your own node script — agents that do burn the whole
+          witness window on coding (observed: a leg that never published
+          before the window closed). Do not modify repo files. When done,
+          report the exact command you ran and the responder's answer text.
           HINT
 
           copilot --yolo --max-ai-credits 50 -p "$(cat "$RUNNER_TEMP/hint.md")" \
@@ -907,31 +902,26 @@ jobs:
           another live node -- a "responder" run by this project's CI on
           another runner (possibly a different OS).
 
-          Everything you need to know is IN THIS REPO. Read README.md (the
-          "Chat CLI" and "Env" sections) and AGENTS.md before running anything.
+          Everything you need is IN THIS REPO. The repo ships a ready-made
+          asker -- scripts/interop-ask.mjs -- that implements the whole
+          protocol (topic join, mesh settle, publish, keepalive, answer
+          capture). Run it with EXACTLY these env vars:
 
-          The witness on this runner only counts an exchange that meets ALL of:
-            1. your question is published on the "gnostr" topic as a JSON chat
-               envelope in this repo's format, with "name": "opencode"
-            2. its "text" contains "gnostr-interop-question-${{ github.run_id }}-opencode-${{ env.slug }}"
-               and asks something only another live node can answer -- e.g.
-               what platform/architecture and hostname it runs on
-            3. your sending node listens on /ip4/127.0.0.1/tcp/4017 (use the
-               GNOSTR_LISTEN env var) so the witness can dial it
-            4. the question is sent only AFTER your chat process has been on
-               the topic for at least 20 seconds (gossipsub needs time to
-               graft a mesh -- a message published too early reaches no one)
-            5. after sending, keep your node alive and listening for at least
-               90 more seconds. A responder will answer on the same topic with
-               "name" starting "responder-". Copy the FULL text of the FIRST
-               responder envelope you see into your final report verbatim --
-               that text is the real cross-instance answer.
+            INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-opencode-${{ env.slug }} \
+            CHAT_FROM=opencode \
+            GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4017 \
+            node scripts/interop-ask.mjs
 
-          You may see unrelated traffic on the topic -- this repo's own CI
-          publishes git ads here, and CI witnesses relay questions.
-          Ignore anything that is not your chat question or a responder
-          answer. Do not modify repo files. When done, report the exact
-          commands you ran and the responder's answer text.
+          It prints the FIRST responder answer's full text to stdout --
+          copy that line into your final report verbatim; it is the real
+          cross-instance answer. It exits 0 when answered. If it exits 1
+          (no answer in 120s), run it again once.
+
+          You may read README.md and AGENTS.md for background, but do NOT
+          hand-write your own node script -- agents that do burn the whole
+          witness window on coding (observed: a leg that never published
+          before the window closed). Do not modify repo files. When done,
+          report the exact command you ran and the responder's answer text.
           HINT
 
           VERBOSE_ARGS=""
