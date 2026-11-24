@@ -93,6 +93,14 @@ on:
         type: boolean
         default: true
 
+# one interop run at a time per ref: stacked pushes queue the model legs
+# behind the previous run's legs, the delayed questions land in a shrunken
+# responder window, and legs fail for queueing, not protocol (observed:
+# run 45419388460's opencode legs started ~6 min late behind run 45417111891)
+concurrency:
+  group: interop-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   INTEROP_LIVE_SECS: ${{ github.event.inputs.live_seconds || '600' }}
 
@@ -196,6 +204,9 @@ jobs:
           # public gnostr mesh alone does not reliably deliver between
           # arbitrary runners.
           BRIDGE="$INTEROP_OUT/bridge"
+          # output goes to a file: background stdout dies with the step, and
+          # the Live window step below cats the log (bridge blindness was why
+          # a "responder never dialed the witness" failure was undebuggable)
           ( for i in $(seq 1 45); do
               for name in $(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --jq '.artifacts[].name' 2>/dev/null | grep "^chat-bridge-${{ github.run_id }}" || true); do
                 gh run download "${{ github.run_id }}" -n "$name" -D "$BRIDGE/$name" 2>/dev/null || true
@@ -212,7 +223,7 @@ jobs:
               fi
               printf '%s' "$RESP_BOOT" > "$INTEROP_OUT/responder-bootstrap"
               sleep 20
-            done ) &
+            done ) > "$INTEROP_OUT/bridge-writer.log" 2>&1 &
           echo "bridge writer pid $! (refreshes responder-bootstrap for ~15 min)"
           printf '/ip4/127.0.0.1/tcp/4013' > "$INTEROP_OUT/responder-listen"
           : > "$INTEROP_OUT/responder-bootstrap"   # empty until the bridge/publisher addrs land
@@ -262,12 +273,7 @@ jobs:
           git -C "$CLONE_DIR" log --oneline | head -5
           echo '::endgroup::'
 
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            echo "::notice::LIVE name=$NAME bundle=$CID peer=$PEER — ad on gnostr topic, seeding for ${{ env.INTEROP_LIVE_SECS }}s total"
-            while kill -0 "$(cat "$INTEROP_OUT/pub.pid")" 2>/dev/null; do sleep 15; done
-            echo "publisher exited — full log:"
-            cat "$INTEROP_OUT/publisher.log"
-          fi
+          if [ "$RUNNER_OS" = "Windows" ]; then :; fi
 
           # responder diagnostics: the legs' witness logs name what they saw;
           # without this tail the responder side is a black box (a leg once
@@ -335,6 +341,12 @@ jobs:
           while kill -0 "$(cat "$INTEROP_OUT/pub.pid")" 2>/dev/null; do sleep 15; done
           echo "publisher exited — full log:"
           cat "$INTEROP_OUT/publisher.log"
+          echo '::group::bridge writer log (witness addr feed)'
+          cat "$INTEROP_OUT/bridge-writer.log" 2>/dev/null || echo '(no bridge-writer.log)'
+          echo '::endgroup::'
+          echo '::group::responder log (full — question/answer proof)'
+          cat "$INTEROP_OUT/responder.log" 2>/dev/null || echo '(no responder.log)'
+          echo '::endgroup::'
 
   # Interop against the DEPLOYED gh-pages site (https://randymcmillan.github.io/
   # ipfs-agentd/). The site is built by deploy-gh-pages.yml from master HEAD;
