@@ -635,6 +635,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+          cache: npm   # also covers `npm install -g @opencode/cli` below (same ~/.npm cache)
 
       - name: Install OpenCode CLI
         run: npm install -g @opencode/cli && opencode --version
