@@ -1,0 +1,1 @@
+Full local suite green on node 22.23.5 after this fix (smoke, mcp-e2e, persist, chat-e2e, git-remote-e2e, web-e2e). The flake: gossipsub graft pruned between the mesh gate and the publish under full-suite load; passed standalone.
