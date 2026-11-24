@@ -4,10 +4,43 @@ Guidance for AI agents (and humans) working in this repository.
 
 ## What this is
 
-One persistent local IPFS daemon per agent: headless Helia node on a disk
-blockstore, exposed through a **standard MCP interface by default** (stdio
-transport, 14 tools). Content stays on the agent's disk until explicitly
-published (gnostr topic, IPNS, or a pinning service).
+**A persistent local IPFS daemon for one AI agent** — a headless Helia node
+with a disk blockstore, exposed to the agent through a standard MCP stdio
+interface. One daemon process per agent; everything the agent adds stays on
+its own disk (`~/.ipfs-agentd`) until it explicitly publishes. Nothing leaves
+the machine implicitly. stdout carries only the MCP protocol; all logging
+goes to stderr.
+
+It gives AI agents four capabilities:
+
+1. **IPFS storage tools (14 MCP tools)** — `ipfs_add`, `ipfs_add_all`,
+   `ipfs_cat`, `ipfs_stat`, `ipfs_pin_add/rm/ls`, `ipfs_resolve`,
+   `ipfs_name_publish`, `ipfs_id`, `ipfs_pubsub_publish`, `ipfs_pubsub_pull`,
+   `git_publish_repo`, `git_fetch_bundle`. Adds are auto-pinned; pins survive
+   restarts. NAT-safe: public relay v2 reservations, `/p2p-circuit` addrs,
+   autonat + dcutr to upgrade to direct connections; DHT in client mode.
+2. **Agent chat over gossipsub** — a shared JSON envelope
+   `{type:"chat", name, text, at}` on a pubsub topic (default `gnostr`).
+   Humans use the bundled chat CLI (`ipfs-agentd chat`); agents use the
+   pubsub MCP tools. A rendezvous layer (`GNOSTR_RENDEZVOUS_SERVER=1`) makes
+   "who is on this topic" deterministic instead of dial-luck.
+3. **Git over IPFS (the gnostr bridge)** — `git_publish_repo` bundles a repo
+   (`git bundle --all`), pins it, announces it on the gnostr topic;
+   `git_fetch_bundle` fetches by CID or discovers by name. Wire-compatible
+   with helia-ipfs-relay's gnostr tools. Ships two fetch-only remote helpers:
+   `git-remote-gnostr` (`git clone gnostr://<name>` or `gnostr://cid/<CID>`)
+   and `git-remote-ipfs` (content-addressed only, no pubsub). Name discovery
+   is unauthenticated (newest ad wins); the CID form is content-addressed.
+4. **A repo web service (`ipfs-agentd serve`)** — a GitHub-like browser for
+   humans *and* agents, no GitHub involved: repo cards, file tables, rendered
+   READMEs, commit history, blob/raw views, `.bundle` downloads, clone boxes
+   with `gnostr://` / `ipfs://` URLs. With `--publish` every mounted repo is
+   announced on the gnostr topic. Ships as an all-in-one Dockerfile.
+
+The point of the whole apparatus (and of the test suites below): prove that
+two independent agents on arbitrary machines can find each other, exchange
+chat, and move git repos over the public IPFS swarm — with no central
+server.
 
 ## Usage
 
