@@ -78,7 +78,7 @@ on:
         description: 'OpenCode leg: MULTI-model matrix (comma-separated provider/model list; overrides opencode_model)'
         default: ''
       verbose:
-        description: 'Model beam: verbose agent chat — opencode streams --thinking + --print-logs; full transcripts land in the step summary'
+        description: 'Model beam: verbose agent chat — opencode streams --thinking + --print-logs; full transcripts land in the step summary; the full gnostr chat negotiation (question/answer envelopes) is echoed to the CI log + step summary'
         type: boolean
         default: false
       bump_on_pass:
@@ -546,6 +546,24 @@ jobs:
           done
           # machine-readable outcome for the beam-promote job (artifact below)
           if [ "$VERDICT" = "pass" ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
+          if [ "${{ inputs.verbose }}" = "true" ]; then
+            # full chat negotiation: witness.out carries the COMPLETE question /
+            # answer envelope text (stdout, printed at verdict time); witness.log
+            # carries the live QUESTION/ANSWER sightings on the gnostr topic
+            echo "::group::chat negotiation — full gnostr envelopes (witness.out + Q&A sightings)"
+            cat "$RUNNER_TEMP/witness.out" 2>/dev/null
+            grep -E 'witness: (QUESTION|ANSWER) from' "$RUNNER_TEMP/witness.log" 2>/dev/null
+            echo "::endgroup::"
+            {
+              echo "<details><summary>chat negotiation — full gnostr envelopes</summary>"
+              echo ""
+              echo '```'
+              cat "$RUNNER_TEMP/witness.out" 2>/dev/null
+              grep -E 'witness: (QUESTION|ANSWER) from' "$RUNNER_TEMP/witness.log" 2>/dev/null
+              echo '```'
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ "$VERDICT" = "pass" ]; then
             echo copilot > "$RUNNER_TEMP/beam-pass"
             echo "::notice::COPILOT CHAT INTEROP PASS — copilot's question got a real answer from another instance"
@@ -910,6 +928,24 @@ jobs:
           done
           # machine-readable outcome for the beam-promote job (artifact below)
           if [ "$VERDICT" = "pass" ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
+          if [ "${{ inputs.verbose }}" = "true" ]; then
+            # full chat negotiation: witness.out carries the COMPLETE question /
+            # answer envelope text (stdout, printed at verdict time); witness.log
+            # carries the live QUESTION/ANSWER sightings on the gnostr topic
+            echo "::group::chat negotiation — full gnostr envelopes (witness.out + Q&A sightings)"
+            cat "$RUNNER_TEMP/witness.out" 2>/dev/null
+            grep -E 'witness: (QUESTION|ANSWER) from' "$RUNNER_TEMP/witness.log" 2>/dev/null
+            echo "::endgroup::"
+            {
+              echo "<details><summary>chat negotiation — full gnostr envelopes</summary>"
+              echo ""
+              echo '```'
+              cat "$RUNNER_TEMP/witness.out" 2>/dev/null
+              grep -E 'witness: (QUESTION|ANSWER) from' "$RUNNER_TEMP/witness.log" 2>/dev/null
+              echo '```'
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ "$VERDICT" = "pass" ]; then
             echo "${{ matrix.model }}" > "$RUNNER_TEMP/beam-pass"
             echo "::notice::OPENCODE CHAT INTEROP PASS -- opencode (${{ matrix.model }}) got a real answer from another instance"
