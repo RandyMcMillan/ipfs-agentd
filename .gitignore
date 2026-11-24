@@ -4,3 +4,6 @@ node_modules/
 dist/
 sea-config.json
 sea-prep.blob
+# local observation fleet runtime state (scripts/local-observe.sh, observe-loop.sh)
+scripts/observe/pids/
+scripts/observe/listener-repo/
