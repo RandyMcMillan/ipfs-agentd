@@ -277,7 +277,12 @@ jobs:
       - name: Docker peer — build image
         if: matrix.docker
         timeout-minutes: 15
-        run: docker build -t ipfs-agentd:interop .
+        # buildx + the shared gha cache (written by docker.yml on the same
+        # branch): the plain docker build ignored all caching and rebuilt
+        # npm ci from scratch on every leg
+        run: |
+          docker buildx build --load -t ipfs-agentd:interop \
+            --cache-from type=gha --cache-to type=gha,mode=max .
 
       - name: Docker peer — container fetcher (independent node in-container)
         if: matrix.docker
