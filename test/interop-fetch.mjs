@@ -38,7 +38,20 @@ const PEER = process.env.INTEROP_PEER || ''
 const ATTEMPTS = Number(process.env.INTEROP_NAME_ATTEMPTS || 3)
 const ATTEMPT_TIMEOUT_MS = Number(process.env.INTEROP_NAME_TIMEOUT_MS || 60000)
 let byName = null
+/* re-dial the publisher every attempt: the bootstrap connection can be pruned
+ * after the bitswap fetch (observed in CI: docker fetcher only reconnected to
+ * the publisher during its final re-bootstrap sweep, after all attempts had
+ * already timed out ad-less). A live direct connection is enough for the ads
+ * to arrive — no mesh graft required. */
+import { multiaddr } from '@multiformats/multiaddr'
+const BOOTSTRAP_ADDRS = (process.env.GNOSTR_BOOTSTRAP || '').split(',').map(s => s.trim()).filter(Boolean)
+async function redialPublisher () {
+  for (const a of BOOTSTRAP_ADDRS) {
+    try { await ctx.node.dial(multiaddr(a)) } catch { /* already connected or gone */ }
+  }
+}
 for (let attempt = 1; attempt <= ATTEMPTS && !byName; attempt++) {
+  await redialPublisher()
   const meshPeers = ctx.node.services.pubsub.getPeers().map(String)
   log(`by-name attempt ${attempt}/${ATTEMPTS} — topic '${topic}' mesh peers: ${meshPeers.length}` +
     (PEER ? (meshPeers.includes(PEER) ? ' (publisher IN mesh)' : ' (publisher not in mesh yet)') : ''))
