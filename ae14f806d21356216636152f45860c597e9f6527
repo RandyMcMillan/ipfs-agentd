@@ -1,0 +1,1 @@
+Failure mode: docker fetcher lost its bootstrap connection to the publisher after the bitswap CID fetch (connection pruned); it only reconnected during the final re-bootstrap sweep, after all 3 by-name attempts had failed (run 45412390278 ubuntu leg). Fix proven by run 45417111891: live-interop green.
