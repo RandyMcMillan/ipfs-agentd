@@ -100,7 +100,14 @@ export async function createAgentNode ({ repoPath = DEFAULT_REPO, log = () => {}
          * doPX: answer peer-exchange requests — every fleet node is a
          * potential bootstrapper for the gnostr mesh, so prune events
          * should hand the pruned peer other topic members */
-        pubsub: gossipsub({ emitSelf: true, doPX: process.env.GNOSTR_PX !== '0' }),
+        /* floodPublish: send publishes to EVERY connected peer subscribed to
+         * the topic, not just our mesh. The interop witness/asker/responder
+         * trio sits on a churny public "gnostr" swarm where mesh grafting
+         * between two specific nodes is a coin flip (observed: a question
+         * published for 120s straight, republished every 15s, never reached
+         * the witness despite a live direct connection). On small CI topics
+         * the extra fanout is negligible. */
+        pubsub: gossipsub({ emitSelf: true, doPX: process.env.GNOSTR_PX !== '0', floodPublish: process.env.GNOSTR_FLOOD_PUBLISH !== '0' }),
         autonat: autoNAT(),
         dcutr: dcutr()
       }
