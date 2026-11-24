@@ -27,7 +27,7 @@ on:
         default: 'master'
       live_seconds:
         description: 'How long the publisher keeps seeding (seconds)'
-        default: '900'
+        default: '600'
       linux:
         description: 'Run on ubuntu-latest (includes Docker peer leg)'
         type: boolean
@@ -94,7 +94,7 @@ on:
         default: true
 
 env:
-  INTEROP_LIVE_SECS: ${{ github.event.inputs.live_seconds || '900' }}
+  INTEROP_LIVE_SECS: ${{ github.event.inputs.live_seconds || '600' }}
 
 # bash everywhere: on windows runners GitHub maps this to Git Bash, which is
 # what every run block below is written for
