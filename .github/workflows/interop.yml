@@ -204,26 +204,17 @@ jobs:
           # public gnostr mesh alone does not reliably deliver between
           # arbitrary runners.
           BRIDGE="$INTEROP_OUT/bridge"
-          # output goes to a file: background stdout dies with the step, and
-          # the Live window step below cats the log (bridge blindness was why
-          # a "responder never dialed the witness" failure was undebuggable)
-          ( for i in $(seq 1 45); do
-              for name in $(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --jq '.artifacts[].name' 2>/dev/null | grep "^chat-bridge-${{ github.run_id }}" || true); do
-                gh run download "${{ github.run_id }}" -n "$name" -D "$BRIDGE/$name" 2>/dev/null || true
-              done
-              MERGED=$(cat "$BRIDGE"/*/chat-addrs 2>/dev/null | tr -d '\n' | sed 's/,$//')
-              # the publisher peer joins the bootstrap once its peer file lands
-              PUB_PEER=""
-              [ -f "$INTEROP_OUT/peer" ] && PUB_PEER="/ip4/127.0.0.1/tcp/4011/p2p/$(cat "$INTEROP_OUT/peer")"
-              RESP_BOOT=$(printf '%s,%s' "$PUB_PEER" "$MERGED" | sed 's/^,//; s/,$//')
-              if [ -n "$MERGED" ]; then
-                echo "chat bridge: $(echo "$MERGED" | tr ',' '\n' | wc -l) witness addr(s) from $(ls -d "$BRIDGE"/*/ 2>/dev/null | wc -l) leg(s)"
-              else
-                echo "::warning::no chat bridge artifact yet -- public-swarm fallback only (poll $i/45)"
-              fi
-              printf '%s' "$RESP_BOOT" > "$INTEROP_OUT/responder-bootstrap"
-              sleep 20
-            done ) > "$INTEROP_OUT/bridge-writer.log" 2>&1 &
+          # committed script (scripts/observe/ci-bridge-writer.sh) — curl, not
+          # gh: gh needs GH_TOKEN in env and fails SILENTLY inside
+          # 2>/dev/null | grep || true chains (observed: an entire run whose
+          # writer wrote nothing for 15 min — the responder saw zero witness
+          # addrs and every model leg timed out unanswered). Output goes to a
+          # file: background stdout dies with the step; the Live window step
+          # cats it.
+          GH_TOKEN="${{ github.token }}" bash scripts/observe/ci-bridge-writer.sh \
+            "${{ github.repository }}" "${{ github.run_id }}" \
+            "$INTEROP_OUT/responder-bootstrap" "$BRIDGE" 45 \
+            > "$INTEROP_OUT/bridge-writer.log" 2>&1 &
           echo "bridge writer pid $! (refreshes responder-bootstrap for ~15 min)"
           printf '/ip4/127.0.0.1/tcp/4013' > "$INTEROP_OUT/responder-listen"
           : > "$INTEROP_OUT/responder-bootstrap"   # empty until the bridge/publisher addrs land
