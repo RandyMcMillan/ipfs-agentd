@@ -1,6 +1,7 @@
 name: interop
 
-# Live interop, dispatch-only with per-OS select (default linux):
+# Live interop — workflow_dispatch with per-OS select (default linux) OR on
+# every push to master (input defaults apply):
 # each selected runner hosts two independent ipfs-agentd nodes plus the real
 # git-remote-gnostr CLI helper; the linux leg additionally builds the Docker
 # image and joins the container itself as an independent peer.
@@ -13,6 +14,12 @@ name: interop
 # The job then waits out the live window so external peers can confirm the ad.
 
 on:
+  # input defaults apply on push (github.event.inputs is empty): linux only,
+  # live free-catalog opencode query, copilot off, verbose off, bump_on_pass
+  # on. beam-promote pushes with GITHUB_TOKEN, which does NOT re-trigger
+  # workflows — no push/promote loop.
+  push:
+    branches: [master]
   workflow_dispatch:
     inputs:
       ref:
@@ -109,9 +116,9 @@ jobs:
           # inputs as the literal strings true/false
           include=''; sep=''
           add() { include="${include}${sep}{\"os\":\"$1\",\"docker\":$2}"; sep=','; }
-          [ "${{ inputs.linux }}"   = "true" ] && add ubuntu-latest true  || echo 'linux not selected'
-          [ "${{ inputs.windows }}" = "true" ] && add windows-latest false || echo 'windows not selected'
-          [ "${{ inputs.macos }}"   = "true" ] && add macos-latest false || echo 'macos not selected'
+          [ "${{ github.event.inputs.linux != 'false' }}"   = "true" ] && add ubuntu-latest true  || echo 'linux not selected'
+          [ "${{ github.event.inputs.windows == 'true' }}"  = "true" ] && add windows-latest false || echo 'windows not selected'
+          [ "${{ github.event.inputs.macos == 'true' }}"    = "true" ] && add macos-latest false || echo 'macos not selected'
           include="[$include]"
           echo "include=$include" >> "$GITHUB_OUTPUT"   # single-line JSON
           echo "matrix: $include"
@@ -979,7 +986,7 @@ jobs:
   # dispatches can't race the push.
   beam-promote:
     name: Beam promote — version bump on PASS
-    if: always() && inputs.bump_on_pass == true
+    if: always() && (inputs.bump_on_pass == true || github.event_name == 'push')
     needs: [copilot-chat, opencode-chat]
     runs-on: ubuntu-latest
     timeout-minutes: 5
