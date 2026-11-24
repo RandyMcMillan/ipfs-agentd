@@ -47,6 +47,19 @@ host gives direct dialability instead.
 
 ## Development
 
+- **Git notes**: attach debugging context to fix commits — root cause,
+  evidence (run ids), the why — so `git log --notes` tells the whole story.
+  Notes live on `refs/notes/commits`, which is NOT fetched or pushed by
+  default. Do it right:
+  - add: `git notes add -m "<context>" <sha>`
+  - push: `git push origin refs/notes/commits` (a plain `git push` does NOT
+    push notes)
+  - fetch on a fresh clone: `git fetch origin refs/notes/commits:refs/notes/commits`
+    (then `git log --notes` shows them; or set
+    `git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'` once
+    so plain fetches pull them too)
+  - never rewrite published notes history casually — notes are a shared ref;
+    treat force-pushing `refs/notes/commits` like force-pushing master.
 - Node >= 22 (see `.nvmrc`). Layout:
   - `src/node.js` — node factory. **Do not break the recipe**: helia must own
     the libp2p config (`createHelia({ libp2p: ... })`) and be started
