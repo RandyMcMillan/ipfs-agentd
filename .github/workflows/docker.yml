@@ -64,7 +64,7 @@ jobs:
           # never forces a full npm-ci rebuild
           cache-from: |
             type=gha
-            type=registry,ref=${{ env.IMAGE }}:buildcache
+            type=registry,ref=ghcr.io/randymcmillan/ipfs-agentd:buildcache
           cache-to: |
             type=gha,mode=max
-            type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
+            type=registry,ref=ghcr.io/randymcmillan/ipfs-agentd:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
