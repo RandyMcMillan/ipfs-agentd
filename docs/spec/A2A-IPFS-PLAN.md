@@ -1,9 +1,15 @@
-# A2A over libp2p — Formal Specification Plan
+# A2A over IPFS — Formal Specification Plan
 
-Working name: **a2lp** (A2A over libp2p). An extension of the A2A
-(Agent2Agent) standard onto IPFS/libp2p transport, so agents can discover,
+Working name: **a2aipfs** (A2A over IPFS). An extension of the A2A
+(Agent2Agent) standard onto the IPFS/libp2p stack, so agents can discover,
 task, and verify each other on the public decentralized mesh without HTTP
 endpoints.
+
+Scope note: the wire protocol requires only libp2p (gossipsub, direct
+streams, relay) — a bare libp2p swarm suffices. IPFS contributes the
+identity and data layer: peer-id-based Agent Cards as content-addressed
+IPLD, IPNS naming, public-mesh discovery. The name leads with the
+distinctive half.
 
 Status: PLANNING. This document is the plan for producing the formal
 specification — not the specification itself.
@@ -30,7 +36,7 @@ libp2p/IPFS breaks those assumptions and replaces them with stronger ones:
 
 What we keep from A2A, unchanged in spirit: the **Task** as the unit of
 work, the task state machine, Messages/Parts/Artifacts semantics, and the
-Agent Card as the discovery document. a2lp is a *transport and discovery
+Agent Card as the discovery document. a2aipfs is a *transport and discovery
 binding* plus one new primitive (attestation) that HTTP A2A cannot express.
 
 ## 2. Specification deliverables
@@ -45,7 +51,7 @@ The formal specification will be a versioned document set in `docs/spec/`:
    4. Topic conventions (namespacing, run/task-scoped markers)
    5. Agent Card representation & discovery (IPLD, IPNS, rendezvous, presence)
    6. Task lifecycle binding (states, correlation, timeouts)
-   7. Direct-stream protocol (`/a2lp/1.0.0`) — request/response,
+   7. Direct-stream protocol (`/a2aipfs/1.0.0`) — request/response,
       streaming chunks, backpressure
    8. Attestation (`attest`) — witness envelopes, different-peer proof,
       replay rules
@@ -56,7 +62,7 @@ The formal specification will be a versioned document set in `docs/spec/`:
 2. **`SCHEMAS/`** — JSON-Schema for every envelope type; one file per type.
 3. **`TESTVECTORS/`** — hex/JSON vectors: valid/invalid envelopes, signature
    cases, state-machine traces. Consumed by the conformance suite.
-4. **`MAPPING.md`** — non-normative A2A v1.0.0 ↔ a2lp field-by-field mapping,
+4. **`MAPPING.md`** — non-normative A2A v1.0.0 ↔ a2aipfs field-by-field mapping,
    including what we deliberately drop (SSE streaming → gossipsub + direct
    streams) and the HTTP gateway semantics for interop with URL-based A2A
    agents.
@@ -94,7 +100,7 @@ that enforces it.
   implementation. Land it under `docs/spec/IMPLEMENTATION-NOTES.md`.
 - **M1 — SPEC v0.1 draft.** Envelope, message types 1–7, topic conventions,
   Agent Card binding. JSON-Schema for each envelope.
-- **M2 — gateway + mapping.** HTTP↔a2lp gateway so URL-based A2A agents can
+- **M2 — gateway + mapping.** HTTP↔a2aipfs gateway so URL-based A2A agents can
   reach mesh agents; `MAPPING.md` complete.
 - **M3 — attestation + test vectors.** `attest` type, witness conformance,
   TESTVECTORS consumed by CI.
@@ -105,6 +111,6 @@ that enforces it.
 
 - Spec changes land via PR, one change per PR, discussion in the PR.
 - Envelope additions require a schema file + test vector in the same PR.
-- Wire-format breaks bump the protocol version (`/a2lp/2.0.0`), never
+- Wire-format breaks bump the protocol version (`/a2aipfs/2.0.0`), never
   silently.
 - The repo's interop CI is the sole merge gate for spec-affecting changes.
