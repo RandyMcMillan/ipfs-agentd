@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2aipfs.dev/schemas/1.0/stream-chunk.schema.json",
+  "title": "a2aipfs stream-chunk payload",
+  "type": "object",
+  "required": ["seq", "last"],
+  "additionalProperties": false,
+  "properties": {
+    "seq": { "type": "integer", "minimum": 0 },
+    "last": { "type": "boolean" },
+    "data": { "type": "string", "contentEncoding": "base64" },
+    "artifact": { "type": "string", "minLength": 10 },
+    "text": { "type": "string", "maxLength": 1048576 }
+  },
+  "anyOf": [
+    { "required": ["data"] },
+    { "required": ["artifact"] },
+    { "required": ["text"] }
+  ]
+}

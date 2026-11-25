@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2aipfs.dev/schemas/1.0/task.schema.json",
+  "title": "a2aipfs task payload (A2A Task binding)",
+  "type": "object",
+  "required": ["task"],
+  "additionalProperties": false,
+  "properties": {
+    "task": {
+      "type": "object",
+      "required": ["id", "state", "message"],
+      "properties": {
+        "id": { "type": "string" },
+        "state": { "const": "submitted" },
+        "message": { "type": "object" },
+        "artifacts": { "type": "array", "items": { "type": "object" } },
+        "metadata": { "type": "object" }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2aipfs.dev/schemas/1.0/announce.schema.json",
+  "title": "a2aipfs announce payload",
+  "type": "object",
+  "required": ["agent"],
+  "additionalProperties": false,
+  "properties": {
+    "agent": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "card": { "type": "string", "minLength": 10 },
+    "cardInline": { "type": "object" },
+    "ttlMs": { "type": "integer", "minimum": 1000 }
+  },
+  "oneOf": [
+    { "required": ["card"] },
+    { "required": ["cardInline"] }
+  ]
+}

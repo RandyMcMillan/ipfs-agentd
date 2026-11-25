@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2aipfs.dev/schemas/1.0/error.schema.json",
+  "title": "a2aipfs error payload",
+  "type": "object",
+  "required": ["code"],
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "enum": ["unsupported-type", "unsupported-version", "ref-not-found",
+               "payload-too-large", "insufficient-trust", "invalid-signature",
+               "rate-limited", "internal"]
+    },
+    "text": { "type": "string", "maxLength": 4096 }
+  }
+}

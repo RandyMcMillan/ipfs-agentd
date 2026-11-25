@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2aipfs.dev/schemas/1.0/ack.schema.json",
+  "title": "a2aipfs ack payload",
+  "type": "object",
+  "required": ["received"],
+  "additionalProperties": false,
+  "properties": {
+    "received": { "type": "string", "minLength": 10 },
+    "mode": { "enum": ["at-most-once", "at-least-once"], "default": "at-most-once" }
+  }
+}
