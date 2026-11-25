@@ -1,9 +1,9 @@
 {
   "name": "ipfs-agentd",
-  "version": "0.4.29",
+  "version": "0.4.30",
   "type": "module",
   "private": true,
-  "description": "Persistent local IPFS daemon for AI agents — headless Helia node (disk blockstore) with an MCP stdio interface: add, cat, pin, resolve, gnostr pubsub",
+  "description": "Persistent local IPFS daemon for AI agents \u2014 headless Helia node (disk blockstore) with an MCP stdio interface: add, cat, pin, resolve, gnostr pubsub",
   "bin": {
     "ipfs-agentd": "src/bin.js",
     "git-remote-gnostr": "src/git-remote-gnostr.js",
@@ -12,7 +12,7 @@
   "scripts": {
     "start": "node src/bin.js daemon",
     "smoke": "node test/smoke.mjs",
-    "test": "node test/smoke.mjs && node test/mcp-e2e.mjs && node test/persist.mjs && node test/chat-e2e.mjs && node test/rendezvous-e2e.mjs && node test/git-remote-e2e.mjs && node test/web-e2e.mjs && node test/a2aipfs-vectors.mjs",
+    "test": "node test/smoke.mjs && node test/mcp-e2e.mjs && node test/persist.mjs && node test/chat-e2e.mjs && node test/rendezvous-e2e.mjs && node test/git-remote-e2e.mjs && node test/web-e2e.mjs && node test/a2aipfs-vectors.mjs && node test/a2aipfs-e2e.mjs",
     "test:chat": "node test/chat-e2e.mjs",
     "interop:publisher": "node test/interop-publisher.mjs",
     "interop:fetch": "node test/interop-fetch.mjs",
@@ -46,7 +46,9 @@
     "helia": "7.1.16",
     "libp2p": "3.5.1",
     "multiformats": "^13.3.1",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "@ipld/dag-json": "^11.0.0",
+    "@libp2p/crypto": "^5.0.0"
   },
   "devDependencies": {
     "playwright": "^1.65.1"

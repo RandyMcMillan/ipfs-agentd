@@ -108,3 +108,37 @@ luck.
 - Topics are not namespaced; single shared topic per mesh.
 - Responder throttling (`replyEveryMs`) and `maxReplies` are env-tuned, not
   specified.
+
+## 8. a2aipfs reference implementation (M3.5 crypto — landed)
+
+`scripts/a2aipfs-node.mjs` is the conformance reference for SPEC.md. Role
+CLI (`A2AIPFS_ROLE=asker|responder|witness`):
+
+- **§2 envelopes for real**: `id` is a CIDv1 (dag-json codec, sha2-256)
+  over the canonical body (id/sig stripped, dag-json encoding), `sig` is a
+  base64urlpad multibase signature over the same canonical bytes with the
+  node's libp2p private key (libp2p 3.5.1 keeps it at
+  `node.components.components.privateKey` — the PeerId object is
+  public-key-only). Receivers recompute `id` and verify `sig` against the
+  public key recovered from `from` — no shared state needed.
+- **§3 types**: all nine implemented; the asker/responder/witness exercise
+  query/answer/announce/ack/error on the wire.
+- **§4 topics**: exchange on `a2aipfs/v1/<name>`, inboxes on
+  `a2aipfs/v1/agent/<peer>`, attestations on `a2aipfs/v1/witness/<id>`.
+- **§5 repetition**: queries republish every 15s (10s floor); asker does
+  two grace republishes after capture so late-joining witnesses still see
+  the query; responder republishes answers at +3s/+8s. Dedup by `id`.
+- **§7 direct streams**: `/a2aipfs/1.0.0`, NDJSON envelopes; asker falls
+  back after two republish cycles; unknown types get an `error` envelope.
+- **§8/§9 witness**: admissible = signature-valid query AND answer, `ref`
+  correlation, distinct `from` peers; then it builds, signs, publishes and
+  files the `attest` envelope.
+- **Tests**: `test/a2aipfs-e2e.mjs` — three co-located nodes + an injector
+  firing a forged answer (rejected: id/signature) and a pre-standard
+  `{type:"chat"}` envelope (ignored per §2.1); the attest's id and
+  signature are re-verified by an independent reimplementation. CI leg
+  `a2aipfs-mesh` runs the same exchange over the cold public mesh and
+  uploads the signed attest as the run artifact.
+
+This closes the §7 gaps for the wire types above; Agent Card IPNS
+publishing and `task`/`stream-chunk` interop legs remain open.
