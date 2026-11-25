@@ -18,6 +18,11 @@ import { z } from 'zod'
 import { createAgentNode } from './node.js'
 import { createLogger } from './logger.js'
 import * as tools from './tools.js'
+import { createRequire } from 'node:module'
+
+/* package.json is the single source of truth for the version — a stale
+ * hardcoded '0.3.7' here survived three releases unnoticed */
+const PKG_VERSION = createRequire(import.meta.url)('../package.json').version
 
 export async function main (argv = process.argv.slice(2)) {
   const repoIdx = argv.indexOf('--repo')
@@ -31,7 +36,7 @@ export async function main (argv = process.argv.slice(2)) {
   const ctx = await createAgentNode({ repoPath: repo, log })
   log('node started (' + ctx.node.getPeers().length + ' peers at boot; bootstrap dials still landing)')
 
-  const server = new McpServer({ name: 'ipfs-agentd', version: '0.3.7' })
+  const server = new McpServer({ name: 'ipfs-agentd', version: PKG_VERSION })
 
   function def (name, description, shape, fn) {
     server.tool(name, description, shape, async (args) => {

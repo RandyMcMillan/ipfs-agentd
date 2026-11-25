@@ -3,14 +3,16 @@ name: docker
 # Publishes the all-in-one image to GHCR. This workflow owns image pushes:
 #   master push  -> ghcr.io/<repo>:latest + :<sha>
 #   v* tag       -> ghcr.io/<repo>:<tag> + :latest
-#   pull request -> build only (no push) — image build regression gate
-# release.yml deliberately does not push images; it owns the GitHub release.
+# No pull_request trigger on purpose: anonymous PR builds have no GHCR token
+# (cache-to 403 class), they flake (observed: failing after 29s with no code
+# change, next attempt green), and the master push build gates the image
+# minutes after merge anyway. Dockerfile changes are rare; the post-merge
+# build catches them.
 
 on:
   push:
     branches: ['master']
     tags: ['v*']
-  pull_request:
 
 env:
   REGISTRY: ghcr.io

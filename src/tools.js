@@ -9,6 +9,11 @@
 import { CID } from 'multiformats/cid'
 import { generateKeyPair } from '@libp2p/crypto/keys'
 import { peerIdFromPublicKey } from '@libp2p/peer-id'
+import { createRequire } from 'node:module'
+
+/* version comes from package.json — never hand-edit (a stale hardcoded string
+ * here once reported 0.3.7 while the package was 0.4.2) */
+const AGENT_VERSION = 'ipfs-agentd/' + createRequire(import.meta.url)('../package.json').version
 
 const MAX_CAT_BYTES = 32 * 1024 * 1024   // refuse to stream >32 MiB into one JSON response
 
@@ -35,7 +40,7 @@ async function drainPin (gen) {
 export async function ipfsId (ctx) {
   return {
     peerId: ctx.node.peerId.toString(),
-    agent: 'ipfs-agentd/0.3.7',
+    agent: AGENT_VERSION,
     listenAddrs: ctx.node.getMultiaddrs().map((a) => a.toString()),
     connections: ctx.node.getConnections().length,
     peers: ctx.node.getPeers().length,
