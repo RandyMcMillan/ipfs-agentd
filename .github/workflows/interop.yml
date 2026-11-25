@@ -222,7 +222,7 @@ jobs:
           INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }} \
           GNOSTR_LISTEN_FILE="$INTEROP_OUT/responder-listen" GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4013 \
           GNOSTR_BOOTSTRAP_FILE="$INTEROP_OUT/responder-bootstrap" \
-          INTEROP_LIVE_SECS=${{ env.INTEROP_LIVE_SECS }} \
+          INTEROP_LIVE_SECS=$(( ${{ env.INTEROP_LIVE_SECS }} + 600 )) \
           node scripts/chat-responder.mjs 2>"$INTEROP_OUT/responder.log" &
           echo "responder pid $! (log: $INTEROP_OUT/responder.log)"
 
