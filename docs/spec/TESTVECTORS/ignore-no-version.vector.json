@@ -1,0 +1,11 @@
+{
+  "vector": "ignore-no-version",
+  "envelope": {
+    "type": "chat",
+    "name": "legacy",
+    "at": 1795631455702,
+    "text": "pre-standard envelope"
+  },
+  "expect": "ignore",
+  "because": "SPEC §2.1 — messages without a2aipfs field MUST be ignored (pre-standard compat is gateway work, Appendix A)"
+}

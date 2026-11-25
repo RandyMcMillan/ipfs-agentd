@@ -1,0 +1,13 @@
+{
+  "vector": "ignore-missing-sig",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "query",
+    "id": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3v6",
+    "from": "12D3KooWRdiQExamplePeerId0000000000000000000000000000",
+    "ts": 1795631455702,
+    "payload": { "question": "unsigned — must be dropped" }
+  },
+  "expect": "ignore",
+  "because": "SPEC §9 — envelopes with missing or invalid sig MUST be dropped"
+}

@@ -1,0 +1,19 @@
+{
+  "vector": "answer-correlated",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "answer",
+    "id": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3v4",
+    "from": "12D3KooWRdiQExamplePeerId0000000000000000000000000000",
+    "ts": 1795631455710,
+    "topic": "a2aipfs/v1/global",
+    "ref": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3v3v",
+    "sig": "mtestsignature0000000000000000000000000000000000000000000001",
+    "payload": {
+      "text": "I run on linux/x64 — matched the marker",
+      "facts": { "platform": "linux", "arch": "x64", "hostname": "fv-az1234-567" }
+    }
+  },
+  "expect": "accept",
+  "because": "SPEC §2.3 correlation — answer MUST carry ref to its query"
+}

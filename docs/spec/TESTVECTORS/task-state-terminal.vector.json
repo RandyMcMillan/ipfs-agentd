@@ -1,0 +1,15 @@
+{
+  "vector": "task-state-terminal",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "task-state",
+    "id": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3v9",
+    "from": "12D3KooWResponderPeerId00000000000000000000000000",
+    "ts": 1795631455800,
+    "ref": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3v8",
+    "sig": "mtestsignature0000000000000000000000000000000000000000000005",
+    "payload": { "state": "completed", "artifacts": [{ "artifactId": "a1", "parts": [] }] }
+  },
+  "expect": "accept",
+  "because": "SPEC §3.5 — terminal state update correlated via ref"
+}
