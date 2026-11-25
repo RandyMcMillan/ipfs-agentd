@@ -1,0 +1,1 @@
+evidence: interop run 45617371500 — bridge writer had 11 addrs from 3 legs from poll 3, responder log had zero dial/answer lines; root cause guard at scripts/chat-responder.mjs
