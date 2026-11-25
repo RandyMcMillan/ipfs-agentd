@@ -40,7 +40,29 @@ ctx.node.services.pubsub.subscribe(topic)
 log(name + ' on "' + topic + '" — answering questions matching "' + marker + '" via copilot CLI')
 
 const INTEROP_PROTO = '/ipfs-agentd/interop/1.0.0'
-ctx.node.handle(INTEROP_PROTO, (stream) => { (async () => { try { for await (const _ of stream) { /* drain */ } } catch {} })() })
+/* questions can arrive over a direct push from the witness, not only via
+ * pubsub mesh luck — a pushed question MUST be answered exactly like a
+ * pubsub one (the pair leg's witness learns our loopback addr and pushes;
+ * the previous drain-only handler silently dropped every push). */
+ctx.node.handle(INTEROP_PROTO, (stream) => {
+  readStreamJson(stream).then((payload) => {
+    if (payload?.kind === 'question' && typeof payload.text === 'string' && payload.text.includes(marker)) {
+      log('question pushed directly by the witness — delegating to copilot')
+      answer(payload.text)
+    }
+  }, () => {})
+})
+
+const readStreamJson = async (stream) => {
+  const dec2 = new TextDecoder()
+  const parts = []
+  for await (const chunk of stream) {
+    const b = chunk instanceof Uint8Array ? chunk : chunk.slice()
+    parts.push(b)
+    if (parts.reduce((n, c) => n + c.length, 0) > 65536) break
+  }
+  return JSON.parse(parts.map((c) => dec2.decode(c, { stream: true })).join('') + dec2.decode())
+}
 
 const writeStreamJson = async (stream, payload) => {
   try {

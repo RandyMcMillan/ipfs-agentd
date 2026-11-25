@@ -724,7 +724,7 @@ jobs:
             CHAT_ANSWER_PREFIX=responder- \
             CHAT_PUBLISHER_PREFIX=ipfs-agentd-ci-${{ github.run_id }}- \
             GNOSTR_RENDEZVOUS_SERVER=1 \
-            CHAT_DIAL=/ip4/127.0.0.1/tcp/4018 CHAT_TIMEOUT_MS=600000 \
+            CHAT_DIAL=/ip4/127.0.0.1/tcp/4018,/ip4/127.0.0.1/tcp/4019 CHAT_TIMEOUT_MS=600000 \
             node scripts/listen-chat.mjs >"$RUNNER_TEMP/witness.out" 2>"$RUNNER_TEMP/witness.log" &
           echo $! > "$RUNNER_TEMP/witness.pid"
           for i in $(seq 1 60); do grep -q "rendezvous: server up" "$RUNNER_TEMP/witness.log" 2>/dev/null && break; sleep 3; done
@@ -739,6 +739,7 @@ jobs:
           INTEROP_TOPIC=gnostr \
             INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-pair \
             COPILOT_FROM=responder-copilot \
+            GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4019 \
             WINDOW_MS=600000 \
             node scripts/interop-agent-responder.mjs >"$RUNNER_TEMP/agent-responder.out" 2>"$RUNNER_TEMP/agent-responder.log" &
           echo $! > "$RUNNER_TEMP/agent-responder.pid"
