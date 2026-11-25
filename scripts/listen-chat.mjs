@@ -156,6 +156,7 @@ const writeStreamJson = async (stream, payload) => {
 
 let relayed = 0
 let pushTimer = null
+let relaySustain = null
 ctx.node.services.pubsub.addEventListener('message', (evt) => {
   if (evt.detail.topic !== topic) return
   let msg
@@ -189,16 +190,30 @@ ctx.node.services.pubsub.addEventListener('message', (evt) => {
        * enough — the responder re-dials on its side too. */
       const addrs = ctx.node.getMultiaddrs().map(String).filter((a) => a.includes('/p2p-circuit'))
       log('witness relay addrs: ' + (addrs.join(' ') || '(none)'))
+      /* first 100s: relay every 10s for responsiveness; after that keep
+       * relaying every 30s for the REST of the window — observed run
+       * 45673142201: relays stopped at 10/10 (t=100s) long before the
+       * pubsub mesh witness↔responder converged, so the question died
+       * mid-window and the responder never heard it. */
       for (const d of [10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]) {
         setTimeout(() => {
           if (done) return
           const relayMsg = { type: 'chat', name: 'witness', at: Date.now(),
             text: marker + ' witness-dial ' + addrs.join(' ') }
           ctx.node.services.pubsub.publish(topic, out.encode(JSON.stringify(relayMsg))).then(
-            () => log('relayed the question with dial addrs (' + (++relayed) + '/10)'),
+            () => log('relayed the question with dial addrs (' + (++relayed) + ')'),
             (e) => log('relay failed: ' + e.message))
         }, d).unref?.()
       }
+      relaySustain = setInterval(() => {
+        if (done) return
+        const relayMsg = { type: 'chat', name: 'witness', at: Date.now(),
+          text: marker + ' witness-dial ' + addrs.join(' ') }
+        ctx.node.services.pubsub.publish(topic, out.encode(JSON.stringify(relayMsg))).then(
+          () => log('relayed the question with dial addrs (' + (++relayed) + ', sustain)'),
+          (e) => log('relay failed: ' + e.message))
+      }, 30000)
+      relaySustain.unref?.()
       /* direct-push bridge: also push the question over every circuit
        * connection (the bridge-dialed responders) right away and every 10s
        * until answered — a responder that connects late still gets it. */
@@ -217,16 +232,18 @@ ctx.node.services.pubsub.addEventListener('message', (evt) => {
   }
 })
 
-/* Direct-push bridge: push the question over every circuit connection —
- * the responders bridge-dialed our relay addrs, so those are the peers that
- * matter. Negotiation failures are ignored (public peers don't speak
- * INTEROP_PROTO). */
+/* Direct-push bridge: push the question over EVERY connection — not just
+ * circuit ones (observed failure run 45673142201: the witness's direct tcp
+ * connection to the matrix runner — which hosts the responder — was skipped
+ * by the /p2p-circuit/ filter, zero direct pushes fired all run, and the
+ * responder only heard the question via pubsub mesh luck 10 min in, after
+ * every witness had timed out). Public peers don't speak INTEROP_PROTO;
+ * their negotiation failures are ignored. */
 function pushQuestion () {
   if (done || !marker || !question) return
   const addrs = ctx.node.getMultiaddrs().map(String).filter((a) => a.includes('/p2p-circuit'))
   const payload = { kind: 'question', text: marker + ' witness-dial ' + addrs.join(' ') }
   for (const conn of ctx.node.getConnections()) {
-    if (!conn.remoteAddr.toString().includes('/p2p-circuit/')) continue
     const peer = conn.remotePeer
     ctx.node.dialProtocol(peer, INTEROP_PROTO).then(
       (stream) => {

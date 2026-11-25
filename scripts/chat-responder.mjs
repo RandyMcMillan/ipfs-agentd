@@ -173,10 +173,12 @@ function considerQuestion (text) {
     () => log('answer ' + replies + '/' + maxReplies + ' published'),
     (e) => log('answer publish failed: ' + (e?.message || e)))
   /* deterministic return path: the witness (and any other bridge peer) gets
-   * the answer over the direct connection, whatever the pubsub mesh does. */
+   * the answer over the direct connection, whatever the pubsub mesh does.
+   * EVERY connection, not just circuit ones — the witness may have dialed
+   * us over a plain direct tcp connection (observed run 45673142201: the
+   * circuit-only filter skipped exactly that connection class). */
   const payload = { kind: 'answer', name, text: answerText }
   for (const conn of ctx.node.getConnections()) {
-    if (!conn.remoteAddr.toString().includes('/p2p-circuit/')) continue
     ctx.node.dialProtocol(conn.remotePeer, INTEROP_PROTO).then(
       (stream) => writeStreamJson(stream, payload),
       () => {})
