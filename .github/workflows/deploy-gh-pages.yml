@@ -9,11 +9,11 @@ name: Deploy IPFS site
 
 on:
   push:
-    # TAGS ONLY (maintainer decision): every master push used to deploy,
-    # and rapid patch pushes + the pages concurrency group meant deploys
-    # cancelled each other mid-flight. The site now redeploys only on
-    # release tags; master pushes change nothing user-facing until a tag.
-    tags: ['v*']
+    # DEFAULT BRANCH ONLY (maintainer decision): tags are not allowed to
+    # deploy to github-pages ("branch/tag rules"). Keep the pages
+    # concurrency group's cancel-in-progress: false so pushes don't
+    # cancel in-flight deploys.
+    branches: [master]
   workflow_dispatch:
     inputs:
       action_ref:
