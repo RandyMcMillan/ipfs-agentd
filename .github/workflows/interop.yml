@@ -643,6 +643,17 @@ jobs:
             exit 1
           fi
 
+      - name: Upload diagnostics on FAIL (witness + agent logs)
+        if: always() && steps.agent.outputs.passed != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-diag-${{ github.run_id }}-copilot
+          path: |
+            ${{ runner.temp }}/witness.log
+            ${{ runner.temp }}/witness.out
+            ${{ runner.temp }}/copilot.log
+          if-no-files-found: ignore
+
       - name: Record beam PASS for the promote job
         if: steps.agent.outputs.passed == 'true'
         uses: actions/upload-artifact@v4
@@ -1021,6 +1032,19 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+
+      - name: Upload diagnostics on FAIL (witness + agent logs)
+        # job logs and step summaries need repo auth to read from outside —
+        # an artifact keeps the failure diagnosable for anyone
+        if: always() && steps.preflight.outputs.callable == 'true' && steps.agent.outputs.passed != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-diag-${{ github.run_id }}-opencode-${{ env.slug }}
+          path: |
+            ${{ runner.temp }}/witness.log
+            ${{ runner.temp }}/witness.out
+            ${{ runner.temp }}/opencode.log
+          if-no-files-found: ignore
 
       - name: Record beam PASS for the promote job
         if: steps.agent.outputs.passed == 'true'
