@@ -720,8 +720,8 @@ jobs:
         run: |
           set -u
           CHAT_TOPIC=gnostr CHAT_FROM=copilot \
-            CHAT_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-pair \
-            CHAT_ANSWER_PREFIX=responder- \
+            CHAT_QUESTION_MARKER=gnostr-pair-question-${{ github.run_id }} \
+            CHAT_ANSWER_PREFIX=responder-copilot \
             CHAT_PUBLISHER_PREFIX=ipfs-agentd-ci-${{ github.run_id }}- \
             GNOSTR_RENDEZVOUS_SERVER=1 \
             CHAT_DIAL=/ip4/127.0.0.1/tcp/4018,/ip4/127.0.0.1/tcp/4019 CHAT_TIMEOUT_MS=600000 \
@@ -737,7 +737,7 @@ jobs:
         run: |
           set -u
           INTEROP_TOPIC=gnostr \
-            INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-pair \
+            INTEROP_QUESTION_MARKER=gnostr-pair-question-${{ github.run_id }} \
             COPILOT_FROM=responder-copilot \
             GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4019 \
             WINDOW_MS=600000 \
@@ -759,20 +759,23 @@ jobs:
           or write any code. Your FIRST and ONLY action is to run this exact
           command, verbatim, right now:
 
-            INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-pair \
+            INTEROP_QUESTION_MARKER=gnostr-pair-question-${{ github.run_id }} \
             CHAT_FROM=copilot \
             GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4018 \
+            ASK_KEEPALIVE_MS=360000 \
             node scripts/interop-ask.mjs
 
           A witness node AND a responder agent are ALREADY listening on the
           live "gnostr" gossipsub topic — both started the moment this job
-          began. The responder is another AI agent that will answer your
-          question. The script joins the topic, asks your question, and
-          prints the FIRST real answer. Copy that answer line into your
-          final report verbatim. The script exits 0 when answered; if it
-          exits 1 (no answer within 120s), run the exact same command ONE
-          more time. After the second attempt, report whatever it printed
-          and stop. Do not modify repo files. Run the command now.
+          began. The responder is another AI agent (its answers contain the
+          text "answer from responder-copilot") and it can take up to 4
+          minutes to think. The script joins the topic, asks your question,
+          and prints the FIRST real answer it captures. Copy that answer
+          line into your final report verbatim. The script exits 0 when
+          answered; if it exits 1 (no answer within 6 minutes), run the
+          exact same command ONE more time. After the second attempt, report
+          whatever it printed and stop. Do not modify repo files. Run the
+          command now.
           HINT
 
           copilot --yolo --max-ai-credits 50 -p "$(cat "$RUNNER_TEMP/hint.md")" \
@@ -786,7 +789,18 @@ jobs:
             if grep -q "WITNESS FAIL" "$RUNNER_TEMP/witness.out" 2>/dev/null; then VERDICT=fail; break; fi
             sleep 4
           done
-          if [ "$VERDICT" = "pass" ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
+          /* A witness PASS alone proves nothing about THIS leg: any responder-*
+           * peer on the mesh can satisfy it (run 45713689397 PASSed off the
+           * matrix leg's responder while copilot #1 captured nothing). The
+           * leg is honest only if the ASKER captured the answer text too —
+           * interop-ask.mjs writes the captured answer verbatim to stdout. */
+          ASK_CAPTURED=""
+          grep -q "answer from responder-copilot" "$RUNNER_TEMP/copilot-asker.log" 2>/dev/null && ASK_CAPTURED=true
+          if [ "$VERDICT" = "pass" ] && [ "$ASK_CAPTURED" = "true" ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
           if [ "${{ inputs.verbose }}" = "true" ]; then
             echo "::group::pair leg — witness envelopes + agent responder log"
             cat "$RUNNER_TEMP/witness.out" 2>/dev/null
@@ -794,20 +808,27 @@ jobs:
             tail -n 20 "$RUNNER_TEMP/agent-responder.log" 2>/dev/null
             echo "::endgroup::"
           fi
-          if [ "$VERDICT" = "pass" ]; then
+          if [ "$VERDICT" = "pass" ] && [ "$ASK_CAPTURED" = "true" ]; then
             echo copilot-pair > "$RUNNER_TEMP/beam-pass"
-            echo "::notice::COPILOT PAIR INTEROP PASS — two copilot agents exchanged question/answer over IPFS, witness-verified"
+            echo "::notice::COPILOT PAIR INTEROP PASS — copilot #2 answered copilot #1 over IPFS; the asker captured the answer; witness verified distinct peers"
             echo "### Copilot pair interop — PASS" >> "$GITHUB_STEP_SUMMARY"
+            echo 'asker-captured answer:' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -m1 "answer from responder-copilot" "$RUNNER_TEMP/copilot-asker.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo 'witness view:' >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             grep -E 'witness: (QUESTION|ANSWER) from' "$RUNNER_TEMP/witness.log" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning::COPILOT PAIR INTEROP FAIL — witness saw no valid Q&A"
-            echo "### Copilot pair interop — FAIL" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::COPILOT PAIR INTEROP FAIL — witness=$VERDICT asker-captured=${ASK_CAPTURED:-false}"
+            echo "### Copilot pair interop — FAIL (witness=$VERDICT asker-captured=${ASK_CAPTURED:-false})" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/witness.log" >> "$GITHUB_STEP_SUMMARY"
             echo '' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/agent-responder.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 30 "$RUNNER_TEMP/copilot-asker.log" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
@@ -1077,7 +1098,7 @@ jobs:
         run: |
           set -u
           CHAT_TOPIC=gnostr CHAT_FROM=opencode \
-            CHAT_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-opencode-${{ env.slug }} \
+            CHAT_QUESTION_MARKER=gnostr-opencode-question-${{ github.run_id }}-${{ env.slug }} \
             CHAT_ANSWER_PREFIX=responder- \
             CHAT_PUBLISHER_PREFIX=ipfs-agentd-ci-${{ github.run_id }}- \
             GNOSTR_RENDEZVOUS_SERVER=1 \
@@ -1117,7 +1138,7 @@ jobs:
           or write any code. Your FIRST and ONLY action is to run this exact
           command, verbatim, right now:
 
-            INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-opencode-${{ env.slug }} \
+            INTEROP_QUESTION_MARKER=gnostr-opencode-question-${{ github.run_id }}-${{ env.slug }} \
             CHAT_FROM=opencode \
             GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4017 \
             CHAT_ADDRS_FILE="$RUNNER_TEMP/chat-addrs" \

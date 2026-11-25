@@ -109,7 +109,11 @@ async function answer (questionText) {
     const copilotSays = await askCopilot(questionText)
     lastAnswer = Date.now()
     answers++
-    const answerText = 'answer from ' + name + ' (peer ' + ctx.node.peerId.toString().slice(0, 12) + '…, host ' + os.hostname() +
+    /* the marker leads the text so the asker's capture filter
+     * (first 3 dash segments of ITS marker) matches — observed pair run
+     * 45713689397: the asker never captured our answer because the text
+     * contained no marker fragment at all. */
+    const answerText = marker + ' answer from ' + name + ' (peer ' + ctx.node.peerId.toString().slice(0, 12) + '…, host ' + os.hostname() +
       '): ' + copilotSays + ' — I run on ' + os.platform() + '/' + os.arch()
     await ctx.node.services.pubsub.publish(topic, enc.encode(JSON.stringify({ type: 'chat', name, at: Date.now(), text: answerText })))
     log('answer ' + answers + '/' + ANSWER_TIMES + ' published')
