@@ -15,8 +15,8 @@ name: interop
 
 on:
   # input defaults apply on push (github.event.inputs is empty): linux only,
-  # live free-catalog opencode query, copilot off, verbose off, bump_on_pass
-  # on. beam-promote pushes with GITHUB_TOKEN, which does NOT re-trigger
+  # live free-catalog opencode query, copilot ON (until the witness leg is
+  # green — more beam data per run), verbose off, bump_on_pass on. beam-promote pushes with GITHUB_TOKEN, which does NOT re-trigger
   # workflows — no push/promote loop.
   push:
     branches: [master]
@@ -41,7 +41,8 @@ on:
         type: boolean
         default: false
       # --- model beam (copilot-chat + opencode-chat legs) -----------------------
-      # copilot is PAID -> DEFAULT OFF (opt in with `copilot`). The opencode leg
+      # copilot is PAID -> was DEFAULT OFF; TEMPORARILY DEFAULT ON until the
+      # witness leg passes (more beam data per run; dispatch can turn it off). The opencode leg
       # is free-first; precedence: opencode_models (list) > opencode_model
       # (single) > live free-catalog query (`opencode models | grep -i free`,
       # first 3 — the free list rotates weekly, never hardcode it). The
@@ -77,7 +78,7 @@ on:
       copilot:
         description: 'Model beam: Copilot leg (PAID -- needs a Copilot seat; free tier ~50 premium req/month)'
         type: boolean
-        default: false
+        default: true
       opencode_model:
         description: 'OpenCode leg: ONE model (provider/model, e.g. opencode/gpt-4.1-mini); empty = live free-catalog matrix'
         default: ''
@@ -454,11 +455,15 @@ jobs:
   # Copilot auth: GITHUB_TOKEN + copilot-requests: write (org policy must
   # allow Copilot CLI billed to the org); --max-ai-credits bounds the cost.
   copilot-chat:
-    # PAID leg -- opt-in only (dispatch input `copilot`, default off). Needs a
+    # PAID leg -- TEMPORARILY default on (push always runs it; dispatch
+    # `copilot: false` opts out). Needs a
     # Copilot seat on the repo owner; the free tier is ~50 premium requests/
     # month. GITHUB_TOKEN gets copilot-requests: write so the CLI can bill
     # against this repo; --max-ai-credits 50 caps spend per run.
-    if: ${{ inputs.copilot == true }}
+    # default ON (until the witness leg is green — more beam data per run);
+    # dispatch can still turn it off. `inputs.*` is empty on push, so gate
+    # on event name too.
+    if: ${{ github.event_name == 'push' || inputs.copilot == true }}
     name: Copilot chat interop (hint-driven PoC)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -937,6 +942,7 @@ jobs:
             INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-opencode-${{ env.slug }} \
             CHAT_FROM=opencode \
             GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4017 \
+            CHAT_ADDRS_FILE="$RUNNER_TEMP/chat-addrs" \
             node scripts/interop-ask.mjs
 
           It prints the FIRST responder answer's full text to stdout --

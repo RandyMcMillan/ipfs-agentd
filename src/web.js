@@ -290,7 +290,10 @@ async function blobPage (name, dir, ref, p) {
   if (!commit) return { status: 404, text: 'ref not found: ' + ref }
   let buf
   try { buf = await git(['show', commit + ':' + gitPath], dir).catch(() => null); if (buf === null) return { status: 404, text: 'not found: ' + p } } catch { return { status: 404, text: 'not found: ' + p } }
-  const isText = !buf.includes('')
+  /* a text blob has no NUL byte — String.includes('') is ALWAYS true (empty
+   * string is a substring of everything), so the old check made isText
+   * permanently false and every blob rendered as "binary file" */
+  const isText = !buf.includes('\x00')
   const lines = isText ? buf.split('\n').map((l, i) => `<span class="ln">${esc(l)}</span>`).join('') : null
   const body = `${crumbs(name, p)}
   <div class="panel"><div class="bar"><strong>${esc(p.split('/').pop())}</strong>

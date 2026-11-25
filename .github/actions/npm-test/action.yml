@@ -2,8 +2,8 @@ name: npm-test
 description: >-
   Reusable test gate: checkout, install nvm + the exact Node from .nvmrc
   (npm cache), npm ci, run the full test suite (smoke + MCP e2e + persist +
-  chat e2e + git-remote e2e + web e2e). Shared by ci.yml and release.yml —
-  update in one place.
+  chat e2e + rendezvous e2e + git-remote e2e + web e2e). Shared by ci.yml
+  and release.yml — update in one place.
 runs:
   using: composite
   steps:

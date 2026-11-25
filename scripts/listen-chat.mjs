@@ -81,13 +81,29 @@ if (addrsFile) {
   tick.unref?.()
 }
 if (dials.length) {
+  /* dial state per addr: log CONNECTED once and failures throttled — a
+   * per-tick failure log on a 5s retry would flood the witness log, but a
+   * silently-swallowed dial leaves the witness a black box when the
+   * co-located link never forms (observed live: asker answered via
+   * public-swarm luck while the witness saw nothing). */
+  const dialState = new Map()
   const dialAll = () => dials.forEach((d) => {
     /* d comes from CHAT_DIAL or unauthenticated git ads on the public
      * topic — multiaddr() throws synchronously on a bad addr, which would
      * kill the witness; dial errors are async and safe to swallow. */
     let ma
     try { ma = multiaddr(d) } catch { return }
-    ctx.node.dial(ma).catch(() => {})
+    const st = dialState.get(d) || { ok: 0, fail: 0 }
+    dialState.set(d, st)
+    ctx.node.dial(ma).then(
+      () => {
+        if (!st.ok) log('dial up: ' + d.slice(0, 60))
+        st.ok++; st.fail = 0
+      },
+      () => {
+        st.fail++
+        if (st.fail === 1 || st.fail % 12 === 0) log('dial to ' + d.slice(0, 60) + ' still failing (' + st.fail + ' tries — peer not up yet?)')
+      })
   })
   dialAll()
   setInterval(dialAll, 5000).unref()

@@ -31,7 +31,10 @@ except Exception: pass")
       mkdir -p "$BRIDGE/$id" && unzip -o -q "$BRIDGE/bridge.zip" -d "$BRIDGE/$id" 2>/dev/null || true
     fi
   done
-  MERGED=$(cat "$BRIDGE"/*/chat-addrs 2>/dev/null | tr -d '\n' | sed 's/,$//')
+  # each chat-addrs file is a comma-separated list with NO trailing newline,
+  # so plain `cat` fuses the last addr of one leg with the first addr of the
+  # next into an invalid multiaddr — terminate each file, then join with commas
+  MERGED=$(for f in "$BRIDGE"/*/chat-addrs; do [ -f "$f" ] && cat "$f" && echo; done 2>/dev/null | tr '\n' ',' | sed 's/,$//')
   # the publisher peer joins the bootstrap once its peer file lands
   PUB_PEER=""
   [ -f "$(dirname "$OUT")/peer" ] && PUB_PEER="/ip4/127.0.0.1/tcp/4011/p2p/$(cat "$(dirname "$OUT")/peer")"

@@ -20,9 +20,10 @@
  *      QUESTION_TEXT (default asks platform/hostname), GNOSTR_LISTEN,
  *      ASK_SETTLE_MS (default 20000), ASK_KEEPALIVE_MS (default 120000)
  */
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { multiaddr } from '@multiformats/multiaddr'
 import { createAgentNode } from '../src/node.js'
 
 const topic = process.env.INTEROP_TOPIC || 'gnostr'
@@ -41,6 +42,34 @@ const dec = new TextDecoder()
 const ctx = await createAgentNode({ repoPath: mkdtempSync(join(tmpdir(), 'interop-ask-')), log })
 ctx.node.services.pubsub.subscribe(topic)
 log(from + ' on "' + topic + '" — settling ' + SETTLE_MS / 1000 + 's before asking (mesh graft)')
+
+/* two-sided witness link: our leg's witness (co-located, started before us)
+ * dials our loopback listener every 5s, but that one-sided race has been
+ * observed losing on a live runner (asker answered via public-swarm luck
+ * while the co-located witness saw nothing). The witness records its relay
+ * addrs in CHAT_ADDRS_FILE — dial them too, and re-read the file during the
+ * keepalive window (the witness may start slightly after us). */
+const addrsFile = process.env.CHAT_ADDRS_FILE || ''
+const dialedAddrs = new Set()
+const dialWitnessAddrs = () => {
+  if (!addrsFile) return
+  let addrs = []
+  try { addrs = readFileSync(addrsFile, 'utf8').split(',').map((s) => s.trim()).filter(Boolean) } catch { return }
+  for (const a of addrs) {
+    if (dialedAddrs.has(a)) continue
+    dialedAddrs.add(a)
+    try {
+      ctx.node.dial(multiaddr(a)).then(
+        () => log('dialed witness ' + a.slice(0, 60)),
+        /* the witness's relay reservation may not be usable on the first
+         * try (or the addr was read before it refreshed) — drop it from the
+         * set so the 10s sweep DIALS IT AGAIN instead of giving up forever */
+        (e) => { dialedAddrs.delete(a); log('witness dial failed ' + a.slice(0, 60) + ': ' + (e?.message || e).slice(0, 80)) })
+    } catch (e) { dialedAddrs.delete(a); log('witness dial error ' + a.slice(0, 60) + ': ' + (e?.message || e).slice(0, 80)) }
+  }
+}
+dialWitnessAddrs()
+setInterval(dialWitnessAddrs, 10000).unref()
 
 let answered = false
 ctx.node.services.pubsub.addEventListener('message', (evt) => {

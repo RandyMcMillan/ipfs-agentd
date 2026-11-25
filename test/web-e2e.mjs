@@ -66,7 +66,13 @@ try {
   check('README rendered as markdown', rp.body.includes('<h1>demo</h1>') && rp.body.includes('<strong>bold</strong>') && rp.body.includes('<code>code</code>') && rp.body.includes('<li>one</li>'))
 
   const blob = await get('/demo/blob/HEAD/README.md')
+  /* a text blob must render line-numbered content — a bug once made EVERY
+   * blob "binary file" (String.includes('') is always true) and this check
+   * still passed because 'blob'/'raw' appear in the chrome */
   check('blob page with line numbers', blob.status === 200 && blob.body.includes('blob') && blob.body.includes('raw'))
+  check('text blob renders content (not "binary file")',
+    blob.body.includes('<span class="ln"># demo</span>') && !blob.body.includes('binary file'),
+    blob.body.includes('binary file') ? 'rendered as binary — isText bug?' : 'line-numbered text rendered')
 
   const raw = await get('/demo/raw/HEAD/src/nested.txt')
   check('raw file bytes', raw.status === 200 && raw.body === 'nested hello\n', JSON.stringify(raw.body.slice(0, 20)))
