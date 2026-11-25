@@ -1,9 +1,9 @@
 {
   "name": "ipfs-agentd",
-  "version": "0.4.30",
+  "version": "0.4.31",
   "type": "module",
   "private": true,
-  "description": "Persistent local IPFS daemon for AI agents \u2014 headless Helia node (disk blockstore) with an MCP stdio interface: add, cat, pin, resolve, gnostr pubsub",
+  "description": "Persistent local IPFS daemon for AI agents — headless Helia node (disk blockstore) with an MCP stdio interface: add, cat, pin, resolve, gnostr pubsub",
   "bin": {
     "ipfs-agentd": "src/bin.js",
     "git-remote-gnostr": "src/git-remote-gnostr.js",
