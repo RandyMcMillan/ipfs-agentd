@@ -79,7 +79,10 @@ function askCopilot (question) {
   return new Promise((resolve, reject) => {
     const prompt = 'You are an agent answering a question from another agent over a peer-to-peer ' +
       'network. Answer this question in ONE line, plainly, with only facts you actually know: ' + question
-    const args = ['--yolo', '--max-ai-credits', '10', '-p', prompt]
+    /* 30 is the CLI minimum for --max-ai-credits (10 exits rc=1 with
+     * 'Invalid value ... Use at least 30 AI credits' — observed pair run
+     * 45689887974: every delegation died at preflight) */
+    const args = ['--yolo', '--max-ai-credits', '30', '-p', prompt]
     log('asking copilot: ' + question.slice(0, 80))
     const p = spawn('copilot', args, { env: process.env })
     let out = ''
