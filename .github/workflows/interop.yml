@@ -916,7 +916,7 @@ jobs:
           name: chat-bridge-${{ github.run_id }}-opencode-${{ env.slug }}
           path: ${{ runner.temp }}/chat-addrs
 
-      - name: OpenCode must figure out the gnostr chat AND get a real answer
+      - name: OpenCode starts listening immediately (no exploration)
         id: agent
         if: steps.preflight.outputs.callable == 'true'
         timeout-minutes: 12
@@ -932,16 +932,9 @@ jobs:
         run: |
           set -u
           cat > "$RUNNER_TEMP/hint.md" <<HINT
-          You are an autonomous agent on a CI runner for the ipfs-agentd repo
-          (checked out at $GITHUB_WORKSPACE). Your task: ask a question on the
-          LIVE IPFS gossipsub topic "gnostr" and receive a REAL answer from
-          another live node -- a "responder" run by this project's CI on
-          another runner (possibly a different OS).
-
-          Everything you need is IN THIS REPO. The repo ships a ready-made
-          asker -- scripts/interop-ask.mjs -- that implements the whole
-          protocol (topic join, mesh settle, publish, keepalive, answer
-          capture). Run it with EXACTLY these env vars:
+          START IMMEDIATELY. Do NOT explore the repo, read files, make a plan,
+          or write any code. Your FIRST and ONLY action is to run this exact
+          command, verbatim, right now:
 
             INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-opencode-${{ env.slug }} \
             CHAT_FROM=opencode \
@@ -949,16 +942,16 @@ jobs:
             CHAT_ADDRS_FILE="$RUNNER_TEMP/chat-addrs" \
             node scripts/interop-ask.mjs
 
-          It prints the FIRST responder answer's full text to stdout --
-          copy that line into your final report verbatim; it is the real
-          cross-instance answer. It exits 0 when answered. If it exits 1
-          (no answer in 120s), run it again once.
-
-          You may read README.md and AGENTS.md for background, but do NOT
-          hand-write your own node script -- agents that do burn the whole
-          witness window on coding (observed: a leg that never published
-          before the window closed). Do not modify repo files. When done,
-          report the exact command you ran and the responder's answer text.
+          A witness node is ALREADY listening for your question on the live
+          "gnostr" gossipsub topic -- it started the moment this job began.
+          The script joins the topic, asks your question, and prints the
+          FIRST real answer from another live CI node. That answer line is
+          your entire task output: copy it into your final report verbatim.
+          The script exits 0 when answered; if it exits 1 (no answer within
+          120s), run the exact same command ONE more time. After the second
+          attempt, report whatever it printed and stop.
+          Do not modify repo files. Do not create files. Do not inspect the
+          repo. Run the command now.
           HINT
 
           VERBOSE_ARGS=""
