@@ -261,7 +261,7 @@ jobs:
             timeout 300 git clone "gnostr://cid/$CID" "$CLONE_DIR" && \
           test -f "$CLONE_DIR/package.json" && \
           test -f "$CLONE_DIR/src/mcp-server.js" && \
-          git -C "$CLONE_DIR" log --oneline | head -5
+          git -C "$CLONE_DIR" log --oneline -5
           echo '::endgroup::'
 
           if [ "$RUNNER_OS" = "Windows" ]; then :; fi
