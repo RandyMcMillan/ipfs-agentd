@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2aipfs.dev/schemas/1.0/envelope.schema.json",
+  "title": "a2aipfs envelope",
+  "type": "object",
+  "required": ["a2aipfs", "type", "id", "from", "ts", "sig", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "a2aipfs": { "const": "1.0" },
+    "type": {
+      "enum": ["announce", "query", "answer", "task", "task-state",
+               "stream-chunk", "ack", "error", "attest"]
+    },
+    "id": { "type": "string", "minLength": 10 },
+    "from": { "type": "string", "pattern": "^12D3KooW|^16Uiu2HAm|^Qm" },
+    "ts": { "type": "integer", "minimum": 0 },
+    "topic": { "type": "string", "pattern": "^a2aipfs/v1/" },
+    "ref": { "type": "string" },
+    "sig": { "type": "string", "minLength": 8 },
+    "payload": { "type": "object" }
+  }
+}

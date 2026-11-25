@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2aipfs.dev/schemas/1.0/task-state.schema.json",
+  "title": "a2aipfs task-state payload",
+  "type": "object",
+  "required": ["state"],
+  "additionalProperties": false,
+  "properties": {
+    "state": {
+      "enum": ["submitted", "working", "input-required", "auth-required",
+               "completed", "canceled", "failed", "rejected"]
+    },
+    "reason": { "type": "string", "maxLength": 4096 },
+    "inputSchema": { "type": "object" },
+    "artifacts": { "type": "array", "items": { "type": "object" } }
+  }
+}

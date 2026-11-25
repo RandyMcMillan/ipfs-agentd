@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2aipfs.dev/schemas/1.0/attest.schema.json",
+  "title": "a2aipfs attest payload",
+  "type": "object",
+  "required": ["exchange", "askerPeer", "responderPeer", "witnessPeer", "topic"],
+  "additionalProperties": false,
+  "properties": {
+    "exchange": {
+      "type": "object",
+      "required": ["requestId", "responseId"],
+      "properties": {
+        "requestId": { "type": "string", "minLength": 10 },
+        "responseId": { "type": "string", "minLength": 10 }
+      }
+    },
+    "askerPeer": { "type": "string" },
+    "responderPeer": { "type": "string" },
+    "witnessPeer": { "type": "string" },
+    "topic": { "type": "string" },
+    "observedAt": { "type": "integer" }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2aipfs.dev/schemas/1.0/answer.schema.json",
+  "title": "a2aipfs answer payload",
+  "type": "object",
+  "required": ["text"],
+  "additionalProperties": false,
+  "properties": {
+    "text": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+    "facts": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "platform": { "type": "string" },
+        "arch": { "type": "string" },
+        "hostname": { "type": "string" },
+        "peerId": { "type": "string" }
+      }
+    }
+  }
+}
