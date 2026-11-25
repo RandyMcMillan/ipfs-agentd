@@ -38,7 +38,12 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # NEVER cancel an in-flight Pages deploy: with rapid master pushes
+  # (patch-bump cadence) cancel-in-progress:true killed every deploy
+  # mid-flight and left a red X on each run (observed: 3 consecutive
+  # master pushes, 3 failed deploys ~40s in). Queue instead — the last
+  # queued run deploys newest-HEAD anyway.
+  cancel-in-progress: false
 
 # bash everywhere: on windows runners GitHub maps this to Git Bash,
 # which is what the run blocks are written for
