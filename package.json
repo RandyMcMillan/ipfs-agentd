@@ -1,6 +1,6 @@
 {
   "name": "ipfs-agentd",
-  "version": "0.4.20",
+  "version": "0.4.22",
   "type": "module",
   "private": true,
   "description": "Persistent local IPFS daemon for AI agents \u2014 headless Helia node (disk blockstore) with an MCP stdio interface: add, cat, pin, resolve, gnostr pubsub",
