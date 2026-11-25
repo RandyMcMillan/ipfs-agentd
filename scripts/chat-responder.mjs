@@ -69,25 +69,35 @@ const peerIdOf = (a) => {
 }
 const dialWithRetry = (a, tries = 0) => {
   try {
-    ctx.node.dial(multiaddr(a)).catch(() => { if (tries < 2) setTimeout(() => dialWithRetry(a, tries + 1), 3000) })
-  } catch { /* bad addr */ }
+    ctx.node.dial(multiaddr(a)).then(
+      () => log('dialed bootstrap ' + a.slice(0, 60) + (tries ? ' (retry ' + tries + ')' : '')),
+      (e) => {
+        log('bootstrap dial failed ' + a.slice(0, 60) + ': ' + (e?.message || e).slice(0, 80))
+        if (tries < 2) setTimeout(() => dialWithRetry(a, tries + 1), 3000)
+      })
+  } catch (e) { log('bootstrap dial error ' + a.slice(0, 60) + ': ' + (e?.message || e).slice(0, 80)) }
 }
-if (bootstraps.length) {
-  const dialBoot = () => {
-    bootstraps.forEach((a) => dialWithRetry(a))
-    bootstraps.forEach((a) => {
-      const id = peerIdOf(a)
-      if (id) { try { ctx.node.tagPeer(id, 'interop-bootstrap', { value: 1000, ttl: 25000 }) } catch { /* not connected */ } }
-    })
+/* ALWAYS schedule the file re-read + re-dial: CI starts the responder with
+ * an EMPTY bootstrap file (`: > responder-bootstrap`) and feeds witness
+ * addrs through it — guarding on bootstraps.length here left the re-read
+ * unregistered and the whole artifact bridge dead (observed: 0 dial lines
+ * in a full 10-min live-interop window, every model leg unanswered). */
+const dialBoot = () => {
+  bootstraps.forEach((a) => dialWithRetry(a))
+  bootstraps.forEach((a) => {
+    const id = peerIdOf(a)
+    if (id) { try { ctx.node.tagPeer(id, 'interop-bootstrap', { value: 1000, ttl: 25000 }) } catch { /* not connected */ } }
+  })
+}
+if (bootstraps.length) dialBoot()
+setInterval(dialBoot, 10000).unref()
+setInterval(() => {
+  let added = 0
+  for (const a of readBootFile()) {
+    if (!bootstraps.includes(a)) { bootstraps.push(a); added++; dialWithRetry(a) }
   }
-  dialBoot()
-  setInterval(dialBoot, 10000).unref()
-  setInterval(() => {
-    for (const a of readBootFile()) {
-      if (!bootstraps.includes(a)) { bootstraps.push(a); dialWithRetry(a) }
-    }
-  }, 30000).unref()
-}
+  if (added) log('bootstrap file: +' + added + ' addr(s), total ' + bootstraps.length)
+}, 30000).unref()
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
