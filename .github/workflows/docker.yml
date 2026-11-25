@@ -65,6 +65,9 @@ jobs:
           cache-from: |
             type=gha
             type=registry,ref=ghcr.io/randymcmillan/ipfs-agentd:buildcache
+          # the registry buildcache write needs GHCR auth; PR builds are
+          # anonymous (no login step) so writing the cache-to blob 403s —
+          # keep registry export to logged-in events only
           cache-to: |
             type=gha,mode=max
-            type=registry,ref=ghcr.io/randymcmillan/ipfs-agentd:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
+            ${{ github.event_name != 'pull_request' && 'type=registry,ref=ghcr.io/randymcmillan/ipfs-agentd:buildcache,mode=max,image-manifest=true,oci-mediatypes=true' || '' }}
