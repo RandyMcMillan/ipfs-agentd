@@ -107,7 +107,7 @@ export async function createAgentNode ({ repoPath = DEFAULT_REPO, log = () => {}
          * published for 120s straight, republished every 15s, never reached
          * the witness despite a live direct connection). On small CI topics
          * the extra fanout is negligible. */
-        pubsub: gossipsub({ emitSelf: true, doPX: process.env.GNOSTR_PX !== '0', floodPublish: process.env.GNOSTR_FLOOD_PUBLISH !== '0' }),
+        pubsub: gossipsub({ emitSelf: true, doPX: process.env.GNOSTR_PX !== '0', floodPublish: process.env.GNOSTR_FLOOD_PUBLISH !== '0', runOnLimitedConnection: true }),
         autonat: autoNAT(),
         dcutr: dcutr()
       }
