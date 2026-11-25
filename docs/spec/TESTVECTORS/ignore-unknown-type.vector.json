@@ -1,0 +1,14 @@
+{
+  "vector": "ignore-unknown-type",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "teleport",
+    "id": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3v7",
+    "from": "12D3KooWRdiQExamplePeerId0000000000000000000000000000",
+    "ts": 1795631455702,
+    "sig": "mtestsignature0000000000000000000000000000000000000000000003",
+    "payload": { "destination": "mars" }
+  },
+  "expect": "ignore",
+  "because": "SPEC §2.1 — unknown type values MUST be ignored, not errored"
+}

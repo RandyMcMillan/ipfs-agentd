@@ -1,0 +1,21 @@
+{
+  "vector": "task-valid",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "task",
+    "id": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3v8",
+    "from": "12D3KooWRdiQExamplePeerId0000000000000000000000000000",
+    "ts": 1795631455702,
+    "topic": "a2aipfs/v1/agent/12D3KooWResponderPeerId00000000000000000000000",
+    "sig": "mtestsignature0000000000000000000000000000000000000000000004",
+    "payload": {
+      "task": {
+        "id": "task-0001",
+        "state": "submitted",
+        "message": { "role": "user", "parts": [{ "type": "text", "text": "summarize the mesh state" }] }
+      }
+    }
+  },
+  "expect": "accept",
+  "because": "SPEC §3.4 — task wraps A2A Task verbatim; initial state submitted"
+}

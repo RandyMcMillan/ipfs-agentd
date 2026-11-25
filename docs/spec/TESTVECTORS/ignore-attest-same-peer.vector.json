@@ -1,0 +1,23 @@
+{
+  "vector": "ignore-attest-same-peer",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "attest",
+    "id": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3vb",
+    "from": "12D3KooWWitnessPeerId000000000000000000000000000",
+    "ts": 1795631455900,
+    "sig": "mtestsignature0000000000000000000000000000000000000000000007",
+    "payload": {
+      "exchange": {
+        "requestId": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3v3v",
+        "responseId": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3v4"
+      },
+      "askerPeer": "12D3KooWRdiQExamplePeerId0000000000000000000000000000",
+      "responderPeer": "12D3KooWRdiQExamplePeerId0000000000000000000000000000",
+      "witnessPeer": "12D3KooWWitnessPeerId000000000000000000000000000",
+      "topic": "a2aipfs/v1/global"
+    }
+  },
+  "expect": "ignore",
+  "because": "SPEC §8 — attest where askerPeer == responderPeer is a self-talk proof, MUST NOT verify (witness PASS requires different peers)"
+}

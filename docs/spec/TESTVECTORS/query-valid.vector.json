@@ -1,0 +1,15 @@
+{
+  "vector": "query-valid",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "query",
+    "id": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3v3v",
+    "from": "12D3KooWRdiQExamplePeerId0000000000000000000000000000",
+    "ts": 1795631455702,
+    "topic": "a2aipfs/v1/global",
+    "sig": "mtestsignature0000000000000000000000000000000000000000000000",
+    "payload": { "question": "what platform/architecture and hostname are you running?" }
+  },
+  "expect": "accept",
+  "because": "SPEC §2 envelope, §3.2 query — minimal valid query"
+}

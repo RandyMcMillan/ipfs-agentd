@@ -1,0 +1,14 @@
+{
+  "vector": "ignore-future-version",
+  "envelope": {
+    "a2aipfs": "2.0",
+    "type": "query",
+    "id": "bafybeigdyrzt5sfp7udm7hu76rvq6dk5k4d7zv5z3v3v3v3v3v3v3v3v5",
+    "from": "12D3KooWRdiQExamplePeerId0000000000000000000000000000",
+    "ts": 1795631455702,
+    "sig": "mtestsignature0000000000000000000000000000000000000000000002",
+    "payload": { "question": "hello?" }
+  },
+  "expect": "ignore",
+  "because": "SPEC §10 — implementations MUST ignore envelopes with newer major versions, not fail"
+}
