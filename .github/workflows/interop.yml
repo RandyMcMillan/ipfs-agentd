@@ -654,6 +654,182 @@ jobs:
           name: beam-pass-${{ github.run_id }}-copilot
           path: ${{ runner.temp }}/beam-pass
 
+  # Copilot PAIR leg: TWO Copilot instances exercise the bridge — one asks
+  # (interop-ask.mjs), one answers (interop-agent-responder.mjs delegates the
+  # answer to a second copilot CLI process), the co-located witness verifies
+  # the different-peer exchange. Stands in for the opencode legs while their
+  # free-tier quota is exhausted (observed 2026-11-25: "Free usage limit
+  # reached" on all three opencode models at preflight).
+  copilot-pair:
+    if: ${{ github.event_name == 'push' || inputs.copilot == true }}
+    name: Copilot pair interop (two agents through the witness)
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    permissions:
+      contents: read
+      copilot-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - name: Node (.nvmrc via setup-node)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: npm ci (retry — registry/GitHub flakes)
+        run: |
+          for i in 1 2 3 4 5; do
+            npm ci --no-audit --no-fund && exit 0
+            echo "::warning::npm ci attempt $i failed — retrying in $((i*10))s"
+            sleep $((i*10))
+          done
+          exit 1
+
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot && copilot --version
+
+      - name: Preflight — Copilot CLI present
+        id: preflight
+        run: |
+          set -u
+          set +e
+          if copilot --version; then
+            echo "callable=true" >> "$GITHUB_OUTPUT"
+            echo "preflight PASS: copilot CLI runs"
+          else
+            echo "callable=false" >> "$GITHUB_OUTPUT"
+            echo "reason=copilot CLI failed to run (install/GitHub flake)" >> "$GITHUB_OUTPUT"
+            echo "::warning::preflight: copilot CLI not runnable"
+          fi
+          exit 0
+
+      - name: Record leg as unavailable (preflight failed)
+        if: steps.preflight.outputs.callable != 'true'
+        run: |
+          echo "### Copilot pair interop — UNAVAILABLE" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Preflight: ${{ steps.preflight.outputs.reason }}" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Start chat witness (detached)
+        if: steps.preflight.outputs.callable == 'true'
+        run: |
+          set -u
+          CHAT_TOPIC=gnostr CHAT_FROM=copilot \
+            CHAT_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-pair \
+            CHAT_ANSWER_PREFIX=responder- \
+            CHAT_PUBLISHER_PREFIX=ipfs-agentd-ci-${{ github.run_id }}- \
+            GNOSTR_RENDEZVOUS_SERVER=1 \
+            CHAT_DIAL=/ip4/127.0.0.1/tcp/4018 CHAT_TIMEOUT_MS=600000 \
+            node scripts/listen-chat.mjs >"$RUNNER_TEMP/witness.out" 2>"$RUNNER_TEMP/witness.log" &
+          echo $! > "$RUNNER_TEMP/witness.pid"
+          for i in $(seq 1 60); do grep -q "rendezvous: server up" "$RUNNER_TEMP/witness.log" 2>/dev/null && break; sleep 3; done
+          grep -q "rendezvous: server up" "$RUNNER_TEMP/witness.log" && echo "witness up" || echo "::warning::witness did not report ready"
+
+      - name: Start agent responder (detached — copilot instance #2)
+        if: steps.preflight.outputs.callable == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          INTEROP_TOPIC=gnostr \
+            INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-pair \
+            COPILOT_FROM=responder-copilot \
+            WINDOW_MS=600000 \
+            node scripts/interop-agent-responder.mjs >"$RUNNER_TEMP/agent-responder.out" 2>"$RUNNER_TEMP/agent-responder.log" &
+          echo $! > "$RUNNER_TEMP/agent-responder.pid"
+          echo "agent responder pid $(cat "$RUNNER_TEMP/agent-responder.pid")"
+
+      - name: Copilot #1 starts listening immediately (no exploration)
+        id: agent
+        if: steps.preflight.outputs.callable == 'true'
+        timeout-minutes: 14
+        continue-on-error: false
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          cat > "$RUNNER_TEMP/hint.md" <<HINT
+          START IMMEDIATELY. Do NOT explore the repo, read files, make a plan,
+          or write any code. Your FIRST and ONLY action is to run this exact
+          command, verbatim, right now:
+
+            INTEROP_QUESTION_MARKER=gnostr-interop-question-${{ github.run_id }}-pair \
+            CHAT_FROM=copilot \
+            GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4018 \
+            node scripts/interop-ask.mjs
+
+          A witness node AND a responder agent are ALREADY listening on the
+          live "gnostr" gossipsub topic — both started the moment this job
+          began. The responder is another AI agent that will answer your
+          question. The script joins the topic, asks your question, and
+          prints the FIRST real answer. Copy that answer line into your
+          final report verbatim. The script exits 0 when answered; if it
+          exits 1 (no answer within 120s), run the exact same command ONE
+          more time. After the second attempt, report whatever it printed
+          and stop. Do not modify repo files. Run the command now.
+          HINT
+
+          copilot --yolo --max-ai-credits 50 -p "$(cat "$RUNNER_TEMP/hint.md")" \
+            2>&1 | tee "$RUNNER_TEMP/copilot-asker.log" \
+            || echo "::warning::copilot CLI exited $? (auth/policy? see copilot-asker.log)"
+
+          echo "waiting for the witness verdict…"
+          VERDICT=""
+          for i in $(seq 1 150); do
+            if grep -q "WITNESS PASS" "$RUNNER_TEMP/witness.out" 2>/dev/null; then VERDICT=pass; break; fi
+            if grep -q "WITNESS FAIL" "$RUNNER_TEMP/witness.out" 2>/dev/null; then VERDICT=fail; break; fi
+            sleep 4
+          done
+          if [ "$VERDICT" = "pass" ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
+          if [ "${{ inputs.verbose }}" = "true" ]; then
+            echo "::group::pair leg — witness envelopes + agent responder log"
+            cat "$RUNNER_TEMP/witness.out" 2>/dev/null
+            grep -E 'witness: (QUESTION|ANSWER) from' "$RUNNER_TEMP/witness.log" 2>/dev/null
+            tail -n 20 "$RUNNER_TEMP/agent-responder.log" 2>/dev/null
+            echo "::endgroup::"
+          fi
+          if [ "$VERDICT" = "pass" ]; then
+            echo copilot-pair > "$RUNNER_TEMP/beam-pass"
+            echo "::notice::COPILOT PAIR INTEROP PASS — two copilot agents exchanged question/answer over IPFS, witness-verified"
+            echo "### Copilot pair interop — PASS" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E 'witness: (QUESTION|ANSWER) from' "$RUNNER_TEMP/witness.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::COPILOT PAIR INTEROP FAIL — witness saw no valid Q&A"
+            echo "### Copilot pair interop — FAIL" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 30 "$RUNNER_TEMP/witness.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 30 "$RUNNER_TEMP/agent-responder.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Upload diagnostics on FAIL
+        if: always() && steps.preflight.outputs.callable == 'true' && steps.agent.outputs.passed != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-diag-${{ github.run_id }}-copilot-pair
+          path: |
+            ${{ runner.temp }}/witness.log
+            ${{ runner.temp }}/witness.out
+            ${{ runner.temp }}/copilot-asker.log
+            ${{ runner.temp }}/agent-responder.log
+          if-no-files-found: ignore
+
+      - name: Record beam PASS for the promote job
+        if: steps.agent.outputs.passed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: beam-pass-${{ github.run_id }}-copilot-pair
+          path: ${{ runner.temp }}/beam-pass
+
   # OpenCode leg model resolution. The dispatch dropdown can't be populated
   # from a live query, so this job does it in-workflow and the legs consume
   # its output as a dynamic matrix. Precedence:
@@ -760,7 +936,11 @@ jobs:
   # comment. NON-FATAL: orange.
   opencode-chat:
     needs: opencode-catalog
-    if: needs.opencode-catalog.outputs.models != '[]' && needs.opencode-catalog.outputs.models != ''
+    # TEMPORARY (2026-11-25): opencode free-tier quota exhausted — every
+    # model fails preflight with "Free usage limit reached". The copilot-pair
+    # leg exercises the bridge in the meantime. Re-enable by restoring the
+    # gate below when a provider is connected to the OPENCODE secret.
+    if: ${{ false && needs.opencode-catalog.outputs.models != '[]' && needs.opencode-catalog.outputs.models != '' }}
     name: OpenCode chat interop -- ${{ matrix.model }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1048,7 +1228,7 @@ jobs:
   beam-promote:
     name: Beam promote — version bump on PASS
     if: always() && (inputs.bump_on_pass == true || github.event_name == 'push')
-    needs: [copilot-chat, opencode-chat]
+    needs: [copilot-chat, copilot-pair]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
