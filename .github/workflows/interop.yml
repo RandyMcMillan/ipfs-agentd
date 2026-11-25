@@ -789,11 +789,11 @@ jobs:
             if grep -q "WITNESS FAIL" "$RUNNER_TEMP/witness.out" 2>/dev/null; then VERDICT=fail; break; fi
             sleep 4
           done
-          /* A witness PASS alone proves nothing about THIS leg: any responder-*
-           * peer on the mesh can satisfy it (run 45713689397 PASSed off the
-           * matrix leg's responder while copilot #1 captured nothing). The
-           * leg is honest only if the ASKER captured the answer text too —
-           * interop-ask.mjs writes the captured answer verbatim to stdout. */
+          # A witness PASS alone proves nothing about THIS leg: any responder-*
+          # peer on the mesh can satisfy it (run 45713689397 PASSed off the
+          # matrix leg's responder while copilot #1 captured nothing). The
+          # leg is honest only if the ASKER captured the answer text too —
+          # interop-ask.mjs writes the captured answer verbatim to stdout.
           ASK_CAPTURED=""
           grep -q "answer from responder-copilot" "$RUNNER_TEMP/copilot-asker.log" 2>/dev/null && ASK_CAPTURED=true
           if [ "$VERDICT" = "pass" ] && [ "$ASK_CAPTURED" = "true" ]; then
