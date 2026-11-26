@@ -3,7 +3,7 @@
   "version": "0.4.35",
   "type": "module",
   "private": true,
-  "description": "Persistent local IPFS daemon for AI agents — headless Helia node (disk blockstore) with an MCP stdio interface: add, cat, pin, resolve, gnostr pubsub",
+  "description": "Persistent local IPFS daemon for AI agents \u2014 headless Helia node (disk blockstore) with an MCP stdio interface: add, cat, pin, resolve, gnostr pubsub",
   "bin": {
     "ipfs-agentd": "src/bin.js",
     "git-remote-gnostr": "src/git-remote-gnostr.js",
@@ -22,12 +22,15 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@helia/dag-json": "^6.0.6",
     "@helia/ipns": "^8.0.0",
     "@helia/unixfs": "8.0.9",
     "@ipld/car": "^5.4.9",
+    "@ipld/dag-json": "^11.0.0",
     "@libp2p/autonat": "3.0.32",
     "@libp2p/bootstrap": "12.0.36",
     "@libp2p/circuit-relay-v2": "4.2.17",
+    "@libp2p/crypto": "^5.0.0",
     "@libp2p/dcutr": "3.0.32",
     "@libp2p/gossipsub": "15.0.23",
     "@libp2p/identify": "4.1.18",
@@ -46,9 +49,7 @@
     "helia": "7.1.16",
     "libp2p": "3.5.1",
     "multiformats": "^13.3.1",
-    "zod": "^4.6.7",
-    "@ipld/dag-json": "^11.0.0",
-    "@libp2p/crypto": "^5.0.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "playwright": "^1.65.1"

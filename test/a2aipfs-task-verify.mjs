@@ -13,6 +13,8 @@ import { CID } from 'multiformats/cid'
 import { sha256 } from 'multiformats/hashes/sha2'
 import { base64urlpad } from 'multiformats/bases/base64'
 import { peerIdFromString } from '@libp2p/peer-id'
+import { createHelia } from 'helia'
+import { dagJson as heliaDagJson } from '@helia/dag-json'
 
 const enc = new TextEncoder()
 let failed = 0
@@ -68,6 +70,22 @@ for (let i = 0; i < N; i++) {
   prev = await chainHex(prev, 'chunk ' + i + '/' + N + ' from a2aipfs-task-worker (peer ' + rec.workerPeer.slice(0, 12) + '…) for task ' + rec.task.id.slice(0, 16) + '…')
 }
 check('done.result.chain recomputes from identity-bearing chunk data', prev === done.payload.task.result.chain)
+
+/* ON-IPFS verification: every envelope in the attest must be a content
+ * address — helia's DAG store computes the same CID from the canonical
+ * body and resolves the envelope by its claimed id */
+const helia = await createHelia()
+const dag = heliaDagJson(helia)
+let ipfsOk = true
+for (const e of [rec.task, ...rec.states]) {
+  const bytes = canonicalBytes(e)
+  const viaAdd = await dag.add(dagJson.decode(bytes))
+  if (viaAdd.toString() !== e.id) { ipfsOk = false; console.log('  IPFS dag.add MISMATCH on ' + e.type + ': ' + viaAdd + ' != ' + e.id); continue }
+  const got = await dag.get(CID.parse(e.id))
+  if (got == null) { ipfsOk = false; console.log('  IPFS dag.get did not resolve ' + e.id) }
+}
+check('every attest envelope resolves through IPFS (helia dag.add+dag.get)', ipfsOk)
+await helia.stop()
 
 console.log(failed === 0 ? 'a2aipfs-task-verify: all green' : 'a2aipfs-task-verify: ' + failed + ' FAILED')
 process.exit(failed === 0 ? 0 : 1)

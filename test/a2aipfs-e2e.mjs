@@ -23,6 +23,7 @@ import { CID } from 'multiformats/cid'
 import { sha256 } from 'multiformats/hashes/sha2'
 import { base64urlpad } from 'multiformats/bases/base64'
 import { peerIdFromString } from '@libp2p/peer-id'
+import { dagJson as heliaDagJson } from '@helia/dag-json'
 import { createAgentNode } from '../src/node.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -47,6 +48,18 @@ function canonicalBytes (env) {
   return dagJson.encode(body)
 }
 const envId = (env) => CID.create(1, dagJson.code, sha256.digest(canonicalBytes(env))).toString()
+
+/* independent ON-IPFS check: helia's DAG store must compute the same CID
+ * from the canonical bytes AND resolve the envelope by its claimed id */
+async function ipfsVerifyEnv (helia, env) {
+  const dag = heliaDagJson(helia)
+  const bytes = canonicalBytes(env)
+  const viaAdd = await dag.add(dagJson.decode(bytes))
+  if (viaAdd.toString() !== env.id) return 'helia dag.add CID ' + viaAdd + ' != ' + env.id
+  const got = await dag.get(CID.parse(env.id))
+  if (got == null) return 'helia dag.get(' + env.id + ') did not resolve'
+  return null
+}
 
 function start (role, port, extraEnv) {
   const env = {
@@ -141,7 +154,11 @@ try {
     let sigOk = false
     try { sigOk = await peerIdFromString(attest.from).publicKey.verify(canonicalBytes(attest), base64urlpad.decode(attest.sig)) } catch { sigOk = false }
     check('attest signature verifies against witness peer (§9, independent)', sigOk)
+    check('attest payload records IPFS verification', attest.payload?.ipfs?.verified === true, JSON.stringify(attest.payload?.ipfs?.cids || {}))
+    const ipfsWhy = await ipfsVerifyEnv(injector.helia, attest)
+    check('attest id resolves through IPFS (helia dag.add+dag.get, independent)', ipfsWhy === null, ipfsWhy || attest.id.slice(0, 20))
   }
+  check('witness logged IPFS VERIFIED for the exchange', (witness.stdout_.match(/IPFS VERIFIED/g) || []).length >= 2)
 } catch (e) {
   failed++
   step('EXCEPTION ' + (e?.stack || e))
