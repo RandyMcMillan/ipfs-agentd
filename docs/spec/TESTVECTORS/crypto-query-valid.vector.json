@@ -1,0 +1,19 @@
+{
+  "vector": "crypto-query-valid",
+  "expect": "accept",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "query",
+    "from": "12D3KooWNZeTqEK6huWLyZS3gbZZNrFJPbBUikci6KYGKD13rMYj",
+    "ts": 1730000000000,
+    "payload": {
+      "question": "what is interop?",
+      "tags": [
+        "vectors"
+      ]
+    },
+    "topic": "a2aipfs/v1/vectors",
+    "id": "baguqeera6yvcbsqsrllx5w53brexeypbn25k5eln6kmmr46lspm3frfu2f4q",
+    "sig": "UV1RYtYv26RpVdVaog6_lEkU8Kna-E62g_pGyRFo9ewtXGjJBV67BYrvspZQzVRHLMwp42oREfi_dwvjwk3u7Dw=="
+  }
+}

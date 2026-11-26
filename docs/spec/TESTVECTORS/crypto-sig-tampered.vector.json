@@ -1,0 +1,21 @@
+{
+  "vector": "crypto-sig-tampered",
+  "expect": "reject",
+  "rejectRule": "sig",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "answer",
+    "from": "12D3KooWCwat5Efi3qAdcezPYfzxck9j6i5ZHekR68ZPxm1AWHrr",
+    "ts": 1730000000000,
+    "payload": {
+      "text": "interop is two independent implementations talking. TAMPERED",
+      "facts": {
+        "name": "vector-responder"
+      }
+    },
+    "topic": "a2aipfs/v1/vectors",
+    "ref": "baguqeera6yvcbsqsrllx5w53brexeypbn25k5eln6kmmr46lspm3frfu2f4q",
+    "id": "baguqeeradci4vfcmjbebttpr2pk53fa2apmpy2vmdqgvo5ibeh5ow7fuu66a",
+    "sig": "UWUfXfQqRnDKh0ZNwpxNQrpozOT2RlmJFRjt5iDIyK8130rTHM3dcKQoBURLGwvyrevxaGMLkMvVs2QzYWXR4DQ=="
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "vector": "crypto-forged-zero-sig",
+  "expect": "reject",
+  "rejectRule": "sig",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "task-state",
+    "from": "12D3KooWRHpVoxmdsjea2Ev5B4RqoAxLPbh8bCLGMmeY2jiFM3Ty",
+    "ts": 1730000000000,
+    "payload": {
+      "task": {
+        "state": "working"
+      }
+    },
+    "topic": "a2aipfs/v1/vectors",
+    "ref": "baguqeera6yvcbsqsrllx5w53brexeypbn25k5eln6kmmr46lspm3frfu2f4q",
+    "id": "baguqeeraqfsxxwiobfnhkxpe527mz34c4rbzkegmsaczvuwxuqfd66vcmmtq",
+    "sig": "UAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "vector": "crypto-answer-valid",
+  "expect": "accept",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "answer",
+    "from": "12D3KooWCwat5Efi3qAdcezPYfzxck9j6i5ZHekR68ZPxm1AWHrr",
+    "ts": 1730000000000,
+    "payload": {
+      "text": "interop is two independent implementations talking.",
+      "facts": {
+        "name": "vector-responder"
+      }
+    },
+    "topic": "a2aipfs/v1/vectors",
+    "ref": "baguqeera6yvcbsqsrllx5w53brexeypbn25k5eln6kmmr46lspm3frfu2f4q",
+    "id": "baguqeeradtuje6bubolnel5i2twnfimx22zt5ut4i4ungopqk7apnmd4z52q",
+    "sig": "UWUfXfQqRnDKh0ZNwpxNQrpozOT2RlmJFRjt5iDIyK8130rTHM3dcKQoBURLGwvyrevxaGMLkMvVs2QzYWXR4DQ=="
+  }
+}
