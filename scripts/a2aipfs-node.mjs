@@ -427,10 +427,23 @@ async function runResponder () {
     }
     await publish(ans)
     log('answer ' + answers + '/' + ANSWER_TIMES + ' published, ref ' + env.id.slice(0, 16) + '…')
-    /* §5: republish the answer a couple of times — witnesses subscribe at
-     * different times and gossipsub MAY drop a single publish. */
-    for (const d of [3000, 8000]) {
-      setTimeout(() => { publish(ans).then(() => log('answer republished (' + d + 'ms)'), () => {}) }, d).unref()
+    /* §5: republish the answer — witnesses subscribe at different times and
+     * gossipsub MAY drop a single publish; on the cold mesh co-located links
+     * can drop for tens of seconds even with tags + re-dial sweeps (observed
+     * CI run 45755441986: query seen, every answer missed — the republish
+     * window ended at +8s before the link healed). Each republish is a FRESH
+     * envelope (new id, same ref): receivers dedup by id, so identical
+     * re-sends would be dropped by anyone who already saw the first one —
+     * and §9's republish bound is per message id, which fresh ids satisfy.
+     * The witness correlates answers to queries by ref, so fresh ids are
+     * attest-equivalent. Window matches the query grace schedule (+40s). */
+    const ansPayload = ans.payload
+    for (const d of [3000, 8000, 15000, 25000, 40000]) {
+      setTimeout(() => {
+        buildEnvelope('answer', ansPayload, { ref: env.id }).then((fresh) => {
+          publish(fresh).then(() => log('answer republished (' + d + 'ms) id ' + fresh.id.slice(0, 16) + '…'), () => {})
+        }, () => {})
+      }, d).unref()
     }
   }
 
@@ -769,7 +782,7 @@ async function runWorker () {
     const done = await buildEnvelope('task-state', { task: { state: 'done', result: { chunks: N, acked, chain } } }, { ref: taskId })
     await publish(done)
     log('task-state done published (chunks=' + N + ', acked=' + acked + ')')
-    for (const d of [3000, 8000]) {
+    for (const d of [3000, 8000, 15000, 25000, 40000]) {
       setTimeout(() => { publish(done).then(() => log('done republished (' + d + 'ms)'), () => {}) }, d).unref()
     }
     setTimeout(() => { log('worker window over — task ' + (handled ? 'completed' : 'UNSOLVED')); process.exit(handled ? 0 : 1) }, 4500).unref()
