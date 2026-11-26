@@ -1536,6 +1536,127 @@ jobs:
           name: beam-pass-${{ github.run_id }}-opencode-${{ env.slug }}
           path: ${{ runner.temp }}/beam-pass
 
+  a2aipfs-task:
+    if: ${{ github.event_name == 'push' || inputs.a2aipfs == true }}
+    name: a2aipfs task lifecycle (task → hash-chained stream-chunks → acks → done)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - name: Node (.nvmrc via setup-node)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: npm ci (retry — registry/GitHub flakes)
+        run: |
+          for i in 1 2 3 4 5; do
+            npm ci --no-audit --no-fund && exit 0
+            echo "::warning::npm ci attempt $i failed — retrying in $((i*10))s"
+            sleep $((i*10))
+          done
+          exit 1
+
+      - name: Start task witness (detached)
+        run: |
+          set -u
+          A2AIPFS_ROLE=witness A2AIPFS_TOPIC=a2aipfs/v1/task-${{ github.run_id }} \
+            A2AIPFS_NAME=task-witness A2AIPFS_TIMEOUT_MS=600000 \
+            A2AIPFS_TASK_FILE="$RUNNER_TEMP/task-attest.json" \
+            GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4410 GNOSTR_RENDEZVOUS_SERVER=1 \
+            node scripts/a2aipfs-node.mjs >"$RUNNER_TEMP/task-witness.out" 2>"$RUNNER_TEMP/task-witness.log" &
+          echo $! > "$RUNNER_TEMP/task-witness.pid"
+          sleep 3
+
+      - name: Start task worker (detached)
+        run: |
+          set -u
+          A2AIPFS_ROLE=worker A2AIPFS_TOPIC=a2aipfs/v1/task-${{ github.run_id }} \
+            A2AIPFS_NAME=a2aipfs-task-worker A2AIPFS_TIMEOUT_MS=600000 \
+            A2AIPFS_CHUNKS=5 \
+            GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4411 \
+            A2AIPFS_DIAL=/ip4/127.0.0.1/tcp/4410,/ip4/127.0.0.1/tcp/4412 \
+            node scripts/a2aipfs-node.mjs >"$RUNNER_TEMP/task-worker.out" 2>"$RUNNER_TEMP/task-worker.log" &
+          echo $! > "$RUNNER_TEMP/task-worker.pid"
+
+      - name: Run task asker + verdict
+        id: agent
+        run: |
+          set -u
+          ASK_EXIT=0
+          A2AIPFS_ROLE=asker A2AIPFS_TASK=1 A2AIPFS_TOPIC=a2aipfs/v1/task-${{ github.run_id }} \
+            A2AIPFS_NAME=task-asker A2AIPFS_TIMEOUT_MS=420000 A2AIPFS_CHUNKS=5 \
+            GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4412 \
+            A2AIPFS_DIAL=/ip4/127.0.0.1/tcp/4410,/ip4/127.0.0.1/tcp/4411 \
+            node scripts/a2aipfs-node.mjs >"$RUNNER_TEMP/task-asker.out" 2>"$RUNNER_TEMP/task-asker.log" || ASK_EXIT=$?
+          WITNESS=""
+          for i in $(seq 1 60); do
+            if grep -q "WITNESS PASS" "$RUNNER_TEMP/task-witness.out" 2>/dev/null; then WITNESS=pass; break; fi
+            if grep -q "WITNESS FAIL" "$RUNNER_TEMP/task-witness.out" 2>/dev/null; then WITNESS=fail; break; fi
+            sleep 3
+          done
+          TASKFILE=""
+          [ -s "$RUNNER_TEMP/task-attest.json" ] && TASKFILE=yes
+          VERIFY=""
+          if [ "$TASKFILE" = "yes" ]; then
+            if node test/a2aipfs-task-verify.mjs "$RUNNER_TEMP/task-attest.json" >"$RUNNER_TEMP/task-verify.out" 2>&1; then VERIFY=pass; else VERIFY=fail; fi
+          fi
+          if [ "$ASK_EXIT" = "0" ] && grep -q "task complete: received 5 chunks" "$RUNNER_TEMP/task-asker.out" \
+            && [ "$WITNESS" = "pass" ] && [ "$TASKFILE" = "yes" ] && [ "$VERIFY" = "pass" ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+            echo a2aipfs-task > "$RUNNER_TEMP/beam-pass"
+            echo "::notice::A2AIPFS TASK PASS — task → 5 hash-chained stream-chunks over the direct stream → acks → task-state done, witness attested, independent verify green"
+            echo "### a2aipfs task lifecycle — PASS" >> "$GITHUB_STEP_SUMMARY"
+            echo 'asker verdict line:' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            head -c 600 "$RUNNER_TEMP/task-asker.out" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo 'independent verifier:' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUNNER_TEMP/task-verify.out" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::A2AIPFS TASK FAIL — asker=$ASK_EXIT witness=${WITNESS:-none} attest=${TASKFILE:-no} verify=${VERIFY:-skipped}"
+            echo "### a2aipfs task lifecycle — FAIL (asker=$ASK_EXIT witness=${WITNESS:-none} attest=${TASKFILE:-no} verify=${VERIFY:-skipped})" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 30 "$RUNNER_TEMP/task-witness.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 30 "$RUNNER_TEMP/task-worker.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 30 "$RUNNER_TEMP/task-asker.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Upload task attest + diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2aipfs-task-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/task-attest.json
+            ${{ runner.temp }}/task-verify.out
+            ${{ runner.temp }}/task-witness.log
+            ${{ runner.temp }}/task-witness.out
+            ${{ runner.temp }}/task-worker.log
+            ${{ runner.temp }}/task-asker.log
+          if-no-files-found: ignore
+
+      - name: Record beam PASS for the promote job
+        if: steps.agent.outputs.passed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: beam-pass-${{ github.run_id }}-a2aipfs-task
+          path: ${{ runner.temp }}/beam-pass
+
   # If ANY model-beam leg got a WITNESS PASS (recorded as a beam-pass-<run_id>
   # artifact), land a patch version bump on master. The commit is UNSIGNED by
   # necessity — the project's GPG key never leaves the maintainer's control;
@@ -1545,7 +1666,7 @@ jobs:
   beam-promote:
     name: Beam promote — version bump on PASS
     if: always() && (inputs.bump_on_pass == true || github.event_name == 'push')
-    needs: [copilot-chat, copilot-pair, a2aipfs-mesh, a2aipfs-copilot]
+    needs: [copilot-chat, copilot-pair, a2aipfs-mesh, a2aipfs-copilot, a2aipfs-task]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:

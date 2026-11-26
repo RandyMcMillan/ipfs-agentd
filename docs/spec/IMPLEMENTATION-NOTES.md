@@ -140,5 +140,34 @@ CLI (`A2AIPFS_ROLE=asker|responder|witness`):
   `a2aipfs-mesh` runs the same exchange over the cold public mesh and
   uploads the signed attest as the run artifact.
 
-This closes the §7 gaps for the wire types above; Agent Card IPNS
-publishing and `task`/`stream-chunk` interop legs remain open.
+## 9. Task lifecycle (§3.4–§3.7) — landed
+
+`A2AIPFS_ROLE=worker` executes tasks: on a signature-valid `task`
+(state `submitted`) it publishes `task-state accepted`, dials the task's
+`replyTo` address, delivers the result as an ordered **hash-chained**
+`stream-chunk` sequence over the `/a2aipfs/1.0.0` direct stream
+(`chain_i = sha256(chain_{i-1} ‖ data_i)`, chain carried inside the signed
+payload), collects `ack`s, then publishes `task-state done` with the chunk
+count, ack count and final chain. `A2AIPFS_TASK=1` switches the asker into
+task mode: it verifies every chunk's signature AND chain before acking,
+requires the `done` state before declaring completion, and prints a
+single-line verdict. The witness files a task attest (verbatim signed
+envelopes) to `A2AIPFS_TASK_FILE` once it has observed task + `done` from
+distinct peers. `test/a2aipfs-task-e2e.mjs` (forged `task-state` rejected
+on a negative topic) and `test/a2aipfs-task-verify.mjs` (independent
+re-verify of every embedded envelope + chain recompute) cover it locally;
+CI leg `a2aipfs-task` runs it on the cold public mesh.
+
+### libp2p 3.5.x stream API (hard-won — twice)
+
+`dialProtocol`/`handle` return **evented message streams**, NOT
+`{source, sink}` Duplexes: write with `stream.send(bytes)`, read with
+`for await (const chunk of stream)`, half-close with
+`await stream.closeWrite()`. Code assuming `.sink`/`.source` fails with
+`stream.sink is not a function` — and because those failures sat inside
+`.catch(() => {})` handlers, the §7 direct-stream paths **silently
+never worked** until the task leg exercised them for real. Also:
+`dialProtocol` wants a **PeerId** (or multiaddr object), not a string.
+
+Remaining gaps: Agent Card IPNS publishing; M4 spec freeze (needs two
+independent implementations green).
