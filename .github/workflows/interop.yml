@@ -970,6 +970,183 @@ jobs:
           name: beam-pass-${{ github.run_id }}-a2aipfs-mesh
           path: ${{ runner.temp }}/beam-pass
 
+  a2aipfs-copilot:
+    if: ${{ github.event_name == 'push' || inputs.a2aipfs == true }}
+    name: a2aipfs over Copilot agents (AI asker + AI responder, signed attest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      copilot-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - name: Node (.nvmrc via setup-node)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: npm ci (retry — registry/GitHub flakes)
+        run: |
+          for i in 1 2 3 4 5; do
+            npm ci --no-audit --no-fund && exit 0
+            echo "::warning::npm ci attempt $i failed — retrying in $((i*10))s"
+            sleep $((i*10))
+          done
+          exit 1
+
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot && copilot --version
+
+      - name: Preflight — Copilot CLI present
+        id: preflight
+        run: |
+          set -u
+          set +e
+          if copilot --version; then
+            echo "callable=true" >> "$GITHUB_OUTPUT"
+            echo "preflight PASS: copilot CLI runs"
+          else
+            echo "callable=false" >> "$GITHUB_OUTPUT"
+            echo "reason=copilot CLI failed to run (install/GitHub flake)" >> "$GITHUB_OUTPUT"
+            echo "::warning::preflight: copilot CLI not runnable"
+          fi
+          exit 0
+
+      - name: Record leg as unavailable (preflight failed)
+        if: steps.preflight.outputs.callable != 'true'
+        run: |
+          echo "### a2aipfs over Copilot — UNAVAILABLE" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Preflight: ${{ steps.preflight.outputs.reason }}" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Start a2aipfs witness (detached)
+        if: steps.preflight.outputs.callable == 'true'
+        run: |
+          set -u
+          A2AIPFS_ROLE=witness A2AIPFS_TOPIC=a2aipfs/v1/copilot-${{ github.run_id }} \
+            A2AIPFS_NAME=witness A2AIPFS_TIMEOUT_MS=600000 \
+            A2AIPFS_ATTEST_FILE="$RUNNER_TEMP/a2a-attest.json" \
+            GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4310 GNOSTR_RENDEZVOUS_SERVER=1 \
+            node scripts/a2aipfs-node.mjs >"$RUNNER_TEMP/a2a-witness.out" 2>"$RUNNER_TEMP/a2a-witness.log" &
+          echo $! > "$RUNNER_TEMP/a2a-witness.pid"
+          sleep 3
+
+      - name: Start a2aipfs responder (detached — copilot-delegated, spec answer envelopes)
+        if: steps.preflight.outputs.callable == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          A2AIPFS_ROLE=responder A2AIPFS_TOPIC=a2aipfs/v1/copilot-${{ github.run_id }} \
+            A2AIPFS_NAME=a2aipfs-responder-copilot A2AIPFS_DELEGATE=copilot \
+            A2AIPFS_TIMEOUT_MS=600000 \
+            GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4311 \
+            A2AIPFS_DIAL=/ip4/127.0.0.1/tcp/4310,/ip4/127.0.0.1/tcp/4312 \
+            node scripts/a2aipfs-node.mjs >"$RUNNER_TEMP/a2a-responder.out" 2>"$RUNNER_TEMP/a2a-responder.log" &
+          echo $! > "$RUNNER_TEMP/a2a-responder.pid"
+
+      - name: Copilot #1 runs the a2aipfs asker (spec query envelopes)
+        id: agent
+        if: steps.preflight.outputs.callable == 'true'
+        timeout-minutes: 16
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          cat > "$RUNNER_TEMP/a2a-hint.md" <<HINT
+          START IMMEDIATELY. Do NOT explore the repo, read files, make a plan,
+          or write any code. Your FIRST and ONLY action is to run this exact
+          command, verbatim, right now:
+
+            A2AIPFS_ROLE=asker A2AIPFS_TOPIC=a2aipfs/v1/copilot-${{ github.run_id }} \
+              A2AIPFS_NAME=asker A2AIPFS_TIMEOUT_MS=420000 \
+              GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4312 \
+              A2AIPFS_DIAL=/ip4/127.0.0.1/tcp/4310,/ip4/127.0.0.1/tcp/4311 \
+              node scripts/a2aipfs-node.mjs
+
+          A witness node AND a responder agent are ALREADY listening on the
+          live a2aipfs topic — both started the moment this job began. The
+          responder is another AI agent (its signed answers contain the text
+          "answer from a2aipfs-responder-copilot") and it can take up to 4
+          minutes to think. The script joins the topic, publishes your
+          signed query, and prints the FIRST verified answer it captures.
+          Copy that answer line into your final report verbatim. The script
+          exits 0 when answered; if it exits 1 (no answer within 7 minutes),
+          run the exact same command ONE more time. After the second
+          attempt, report whatever it printed and stop. Do not modify repo
+          files. Run the command now.
+          HINT
+
+          copilot --yolo --max-ai-credits 50 -p "$(cat "$RUNNER_TEMP/a2a-hint.md")" \
+            2>&1 | tee "$RUNNER_TEMP/copilot-a2a-asker.log" \
+            || echo "::warning::copilot CLI exited $? (auth/policy? see copilot-a2a-asker.log)"
+
+          echo "waiting for the witness verdict…"
+          VERDICT=""
+          for i in $(seq 1 120); do
+            if grep -q "WITNESS PASS" "$RUNNER_TEMP/a2a-witness.out" 2>/dev/null; then VERDICT=pass; break; fi
+            if grep -q "WITNESS FAIL" "$RUNNER_TEMP/a2a-witness.out" 2>/dev/null; then VERDICT=fail; break; fi
+            sleep 4
+          done
+          ASK_CAPTURED=""
+          grep -q "answer from a2aipfs-responder-copilot" "$RUNNER_TEMP/copilot-a2a-asker.log" 2>/dev/null && ASK_CAPTURED=true
+          ATTEST=""
+          [ -s "$RUNNER_TEMP/a2a-attest.json" ] && ATTEST=yes
+          DELEGATED=""
+          grep -q '"name": "a2aipfs-responder-copilot"' "$RUNNER_TEMP/a2a-attest.json" 2>/dev/null && DELEGATED=yes
+          if [ "$VERDICT" = "pass" ] && [ "$ASK_CAPTURED" = "true" ] && [ "$ATTEST" = "yes" ] && [ "$DELEGATED" = "yes" ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+            echo a2aipfs-copilot > "$RUNNER_TEMP/beam-pass"
+            echo "::notice::A2AIPFS COPILOT PASS — two Copilot agents exchanged signed a2aipfs query/answer envelopes; witness attestation verified the responder identity"
+            echo "### a2aipfs over Copilot — PASS" >> "$GITHUB_STEP_SUMMARY"
+            echo 'asker-captured answer:' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -m1 "answer from a2aipfs-responder-copilot" "$RUNNER_TEMP/copilot-a2a-asker.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo 'attest envelope:' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUNNER_TEMP/a2a-attest.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::A2AIPFS COPILOT FAIL — witness=$VERDICT asker-captured=${ASK_CAPTURED:-false} attest=${ATTEST:-no} delegated-identity=${DELEGATED:-no}"
+            echo "### a2aipfs over Copilot — FAIL (witness=$VERDICT asker-captured=${ASK_CAPTURED:-false} attest=${ATTEST:-no} delegated-identity=${DELEGATED:-no})" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 30 "$RUNNER_TEMP/a2a-witness.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 30 "$RUNNER_TEMP/a2a-responder.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 30 "$RUNNER_TEMP/copilot-a2a-asker.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Upload attest + diagnostics
+        if: always() && steps.preflight.outputs.callable == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2aipfs-copilot-attest-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/a2a-attest.json
+            ${{ runner.temp }}/a2a-witness.log
+            ${{ runner.temp }}/a2a-witness.out
+            ${{ runner.temp }}/a2a-responder.log
+            ${{ runner.temp }}/copilot-a2a-asker.log
+          if-no-files-found: ignore
+
+      - name: Record beam PASS for the promote job
+        if: steps.agent.outputs.passed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: beam-pass-${{ github.run_id }}-a2aipfs-copilot
+          path: ${{ runner.temp }}/beam-pass
+
   # OpenCode leg model resolution. The dispatch dropdown can't be populated
   # from a live query, so this job does it in-workflow and the legs consume
   # its output as a dynamic matrix. Precedence:
@@ -1368,7 +1545,7 @@ jobs:
   beam-promote:
     name: Beam promote — version bump on PASS
     if: always() && (inputs.bump_on_pass == true || github.event_name == 'push')
-    needs: [copilot-chat, copilot-pair, a2aipfs-mesh]
+    needs: [copilot-chat, copilot-pair, a2aipfs-mesh, a2aipfs-copilot]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
