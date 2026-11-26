@@ -24,6 +24,7 @@ import { CID } from 'multiformats/cid'
 import { sha256 } from 'multiformats/hashes/sha2'
 import { base64urlpad } from 'multiformats/bases/base64'
 import { peerIdFromString } from '@libp2p/peer-id'
+import { dagJson as heliaDagJson } from '@helia/dag-json'
 import { createAgentNode } from '../src/node.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -59,6 +60,16 @@ const chainHex = async (prevHex, data) => {
   const prev = prevHex ? Buffer.from(prevHex, 'hex') : new Uint8Array(0)
   const digest = await sha256.digest(new Uint8Array([...prev, ...enc.encode(data)]))
   return Buffer.from(digest.bytes).toString('hex')
+}
+
+/* independent ON-IPFS check through the injector's own helia node */
+async function ipfsVerifyEnv (helia, env) {
+  const dag = heliaDagJson(helia)
+  const viaAdd = await dag.add(dagJson.decode(canonicalBytes(env)))
+  if (viaAdd.toString() !== env.id) return 'helia dag.add CID ' + viaAdd + ' != ' + env.id
+  const got = await dag.get(CID.parse(env.id))
+  if (got == null) return 'helia dag.get(' + env.id + ') did not resolve'
+  return null
 }
 
 function start (role, port, extraEnv) {
@@ -151,6 +162,13 @@ try {
       if (why) { allOk = false; step('  envelope ' + e.type + ' FAIL: ' + why); break }
     }
     check('every attest envelope id+sig verifies (§2.2,§9, independent)', allOk, all.length + ' envelopes')
+    check('task attest records IPFS verification', rec.ipfs?.verified === true, JSON.stringify(rec.ipfs?.cids || {}))
+    let ipfsAllOk = true
+    for (const e of all) {
+      const why = await ipfsVerifyEnv(injector.helia, e)
+      if (why) { ipfsAllOk = false; step('  envelope ' + e.type + ' IPFS FAIL: ' + why); break }
+    }
+    check('every attest envelope resolves through IPFS (helia dag.add+dag.get, independent)', ipfsAllOk, all.length + ' envelopes')
     check('states cover accepted + done from the worker', ['accepted', 'done'].every((s) => rec.states.some((x) => x.payload.task.state === s && x.from === rec.workerPeer)))
     const done = rec.states.find((x) => x.payload.task.state === 'done')
     check('done result carries chunk count', done?.payload.task.result?.chunks === N)

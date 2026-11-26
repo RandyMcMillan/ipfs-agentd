@@ -53,6 +53,7 @@ import { base64urlpad } from 'multiformats/bases/base64'
 import { peerIdFromString } from '@libp2p/peer-id'
 import { multiaddr } from '@multiformats/multiaddr'
 import { privateKeyFromProtobuf } from '@libp2p/crypto/keys'
+import { dagJson as heliaDagJson } from '@helia/dag-json'
 
 /* libp2p 3.5.1 keeps the node's private key as an internal component (the
  * PeerId object is public-key-only). Resolve it once, with fallbacks. */
@@ -173,6 +174,27 @@ async function verifyEnvelope (e) {
     return null
   } catch (err) {
     return 'envelope crypto failed: ' + (err?.message || err)
+  }
+}
+
+/* ---------- IPFS content-address verification ----------
+ * The envelope id claims to be the CIDv1 (dag-json, sha2-256) of the
+ * canonical body. Verify that claim ON IPFS: hand the canonical bytes to
+ * the node's own helia DAG store and let IPFS compute the CID, then
+ * resolve the envelope by its claimed id through the same store. Both
+ * must agree or the envelope is not admissible for attestation. */
+const ipfsDag = heliaDagJson(ctx.helia)
+
+async function ipfsVerify (env) {
+  try {
+    const bytes = canonicalBytes(env)
+    const viaAdd = await ipfsDag.add(dagJson.decode(bytes)) /* IPFS computes the CID */
+    if (viaAdd.toString() !== env.id) return 'IPFS dag.add CID ' + viaAdd + ' != envelope id (§2.2)'
+    const viaGet = await ipfsDag.get(CID.parse(env.id)) /* resolve BY the claimed id */
+    if (viaGet == null) return 'IPFS dag.get(' + env.id + ') did not resolve'
+    return null
+  } catch (err) {
+    return 'IPFS verification failed: ' + (err?.message || err)
   }
 }
 
@@ -647,6 +669,14 @@ async function runWitness () {
       const whyA = await verifyEnvelope(a)
       if (whyQ || whyA) continue
       if (q.from === a.from) continue /* §8: distinct peers */
+      /* verify the exchange ON IPFS before attesting: the ids must be
+       * content addresses resolvable through the IPFS DAG store */
+      const ipfsQ = await ipfsVerify(q)
+      if (ipfsQ) { log('query not IPFS-admissible: ' + ipfsQ); continue }
+      const ipfsA = await ipfsVerify(a)
+      if (ipfsA) { log('answer not IPFS-admissible: ' + ipfsA); continue }
+      console.log('IPFS VERIFIED ' + q.id + ' (query resolves through the IPFS DAG store)')
+      console.log('IPFS VERIFIED ' + a.id + ' (answer resolves through the IPFS DAG store)')
       done.v = true
       const attest = await buildEnvelope('attest', {
         exchange: { requestId: q.id, responseId: a.id },
@@ -657,7 +687,8 @@ async function runWitness () {
         observedAt: Date.now(),
         requestText: q.payload.question.slice(0, 200),
         answerText: a.payload.text.slice(0, 400),
-        answerFacts: a.payload.facts || null
+        answerFacts: a.payload.facts || null,
+        ipfs: { verified: true, cids: { request: q.id, response: a.id }, via: 'helia dag-json add+get' }
       }, { topic: `a2aipfs/v1/witness/${q.id}` })
       await node.services.pubsub.subscribe(attest.topic)
       await publish(attest)
@@ -685,6 +716,13 @@ async function runWitness () {
       const whyD = await verifyEnvelope(d)
       if (whyT || whyD) continue
       if (t.from === d.from) continue /* §8: distinct peers */
+      /* verify the task exchange ON IPFS before attesting */
+      const ipfsT = await ipfsVerify(t)
+      if (ipfsT) { log('task not IPFS-admissible: ' + ipfsT); continue }
+      const ipfsD = await ipfsVerify(d)
+      if (ipfsD) { log('done not IPFS-admissible: ' + ipfsD); continue }
+      console.log('IPFS VERIFIED ' + t.id + ' (task resolves through the IPFS DAG store)')
+      console.log('IPFS VERIFIED ' + d.id + ' (task-state done resolves through the IPFS DAG store)')
       done.v = true
       const record = {
         task: t,
@@ -693,7 +731,8 @@ async function runWitness () {
         workerPeer: d.from,
         witnessPeer: peerId,
         topic: TOPIC,
-        observedAt: Date.now()
+        observedAt: Date.now(),
+        ipfs: { verified: true, cids: { task: t.id, done: d.id }, via: 'helia dag-json add+get' }
       }
       if (process.env.A2AIPFS_TASK_FILE) {
         try { writeFileSync(process.env.A2AIPFS_TASK_FILE, JSON.stringify(record, null, 2)) } catch (e) { log('task attest file write failed: ' + e.message) }

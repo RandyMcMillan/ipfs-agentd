@@ -923,10 +923,15 @@ jobs:
           done
           ATTEST=""
           [ -s "$RUNNER_TEMP/attest.json" ] && ATTEST=yes
-          if [ "$ASK_EXIT" = "0" ] && [ "$WITNESS" = "pass" ] && [ "$ATTEST" = "yes" ]; then
+          IPFS=""
+          if [ "$(grep -c 'IPFS VERIFIED' "$RUNNER_TEMP/a2a-witness.out" 2>/dev/null || echo 0)" -ge 2 ]; then IPFS=pass; fi
+          if [ "$ATTEST" = "yes" ]; then
+            node -e "const a=require('$RUNNER_TEMP/attest.json');if(!a.payload?.ipfs?.verified)process.exit(1)" || IPFS=fail
+          fi
+          if [ "$ASK_EXIT" = "0" ] && [ "$WITNESS" = "pass" ] && [ "$ATTEST" = "yes" ] && [ "$IPFS" = "pass" ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
             echo a2aipfs-mesh > "$RUNNER_TEMP/beam-pass"
-            echo "::notice::A2AIPFS MESH PASS — signed query/answer exchange over the cold public mesh, witness attestation produced"
+            echo "::notice::A2AIPFS MESH PASS — signed query/answer exchange over the cold public mesh, witness attestation produced and verified ON IPFS"
             echo "### a2aipfs mesh conformance — PASS" >> "$GITHUB_STEP_SUMMARY"
             echo 'asker-captured answer:' >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -936,10 +941,14 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             cat "$RUNNER_TEMP/attest.json" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo 'on-IPFS verification (witness log):' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep 'IPFS VERIFIED' "$RUNNER_TEMP/a2a-witness.out" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "passed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::A2AIPFS MESH FAIL — asker=$ASK_EXIT witness=${WITNESS:-none} attest=${ATTEST:-no}"
-            echo "### a2aipfs mesh conformance — FAIL (asker=$ASK_EXIT witness=${WITNESS:-none} attest=${ATTEST:-no})" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::A2AIPFS MESH FAIL — asker=$ASK_EXIT witness=${WITNESS:-none} attest=${ATTEST:-no} ipfs=${IPFS:-none}"
+            echo "### a2aipfs mesh conformance — FAIL (asker=$ASK_EXIT witness=${WITNESS:-none} attest=${ATTEST:-no} ipfs=${IPFS:-none})" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/a2a-witness.log" >> "$GITHUB_STEP_SUMMARY"
             echo '' >> "$GITHUB_STEP_SUMMARY"
@@ -1100,7 +1109,12 @@ jobs:
           [ -s "$RUNNER_TEMP/a2a-attest.json" ] && ATTEST=yes
           DELEGATED=""
           grep -q '"name": "a2aipfs-responder-copilot"' "$RUNNER_TEMP/a2a-attest.json" 2>/dev/null && DELEGATED=yes
-          if [ "$VERDICT" = "pass" ] && [ "$ASK_CAPTURED" = "true" ] && [ "$ATTEST" = "yes" ] && [ "$DELEGATED" = "yes" ]; then
+          IPFS=""
+          if [ "$(grep -c 'IPFS VERIFIED' "$RUNNER_TEMP/a2a-witness.out" 2>/dev/null || echo 0)" -ge 2 ]; then IPFS=pass; fi
+          if [ "$ATTEST" = "yes" ]; then
+            node -e "const a=require('$RUNNER_TEMP/a2a-attest.json');if(!a.payload?.ipfs?.verified)process.exit(1)" || IPFS=fail
+          fi
+          if [ "$VERDICT" = "pass" ] && [ "$ASK_CAPTURED" = "true" ] && [ "$ATTEST" = "yes" ] && [ "$DELEGATED" = "yes" ] && [ "$IPFS" = "pass" ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
             echo a2aipfs-copilot > "$RUNNER_TEMP/beam-pass"
             echo "::notice::A2AIPFS COPILOT PASS — two Copilot agents exchanged signed a2aipfs query/answer envelopes; witness attestation verified the responder identity"
@@ -1115,8 +1129,8 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "passed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::A2AIPFS COPILOT FAIL — witness=$VERDICT asker-captured=${ASK_CAPTURED:-false} attest=${ATTEST:-no} delegated-identity=${DELEGATED:-no}"
-            echo "### a2aipfs over Copilot — FAIL (witness=$VERDICT asker-captured=${ASK_CAPTURED:-false} attest=${ATTEST:-no} delegated-identity=${DELEGATED:-no})" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::A2AIPFS COPILOT FAIL — witness=$VERDICT asker-captured=${ASK_CAPTURED:-false} attest=${ATTEST:-no} delegated-identity=${DELEGATED:-no} ipfs=${IPFS:-none}"
+            echo "### a2aipfs over Copilot — FAIL (witness=$VERDICT asker-captured=${ASK_CAPTURED:-false} attest=${ATTEST:-no} delegated-identity=${DELEGATED:-no} ipfs=${IPFS:-none})" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/a2a-witness.log" >> "$GITHUB_STEP_SUMMARY"
             echo '' >> "$GITHUB_STEP_SUMMARY"
@@ -1604,15 +1618,20 @@ jobs:
           done
           TASKFILE=""
           [ -s "$RUNNER_TEMP/task-attest.json" ] && TASKFILE=yes
+          IPFS=""
+          if [ "$(grep -c 'IPFS VERIFIED' "$RUNNER_TEMP/task-witness.out" 2>/dev/null || echo 0)" -ge 2 ]; then IPFS=pass; fi
+          if [ "$TASKFILE" = "yes" ]; then
+            node -e "const a=require('$RUNNER_TEMP/task-attest.json');if(!a.ipfs?.verified)process.exit(1)" || IPFS=fail
+          fi
           VERIFY=""
           if [ "$TASKFILE" = "yes" ]; then
             if node test/a2aipfs-task-verify.mjs "$RUNNER_TEMP/task-attest.json" >"$RUNNER_TEMP/task-verify.out" 2>&1; then VERIFY=pass; else VERIFY=fail; fi
           fi
           if [ "$ASK_EXIT" = "0" ] && grep -q "task complete: received 5 chunks" "$RUNNER_TEMP/task-asker.out" \
-            && [ "$WITNESS" = "pass" ] && [ "$TASKFILE" = "yes" ] && [ "$VERIFY" = "pass" ]; then
+            && [ "$WITNESS" = "pass" ] && [ "$TASKFILE" = "yes" ] && [ "$VERIFY" = "pass" ] && [ "$IPFS" = "pass" ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
             echo a2aipfs-task > "$RUNNER_TEMP/beam-pass"
-            echo "::notice::A2AIPFS TASK PASS — task → 5 hash-chained stream-chunks over the direct stream → acks → task-state done, witness attested, independent verify green"
+            echo "::notice::A2AIPFS TASK PASS — task → 5 hash-chained stream-chunks over the direct stream → acks → task-state done, witness attested ON IPFS, independent verify green"
             echo "### a2aipfs task lifecycle — PASS" >> "$GITHUB_STEP_SUMMARY"
             echo 'asker verdict line:' >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -1622,10 +1641,14 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             cat "$RUNNER_TEMP/task-verify.out" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo 'on-IPFS verification (witness log):' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep 'IPFS VERIFIED' "$RUNNER_TEMP/task-witness.out" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "passed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::A2AIPFS TASK FAIL — asker=$ASK_EXIT witness=${WITNESS:-none} attest=${TASKFILE:-no} verify=${VERIFY:-skipped}"
-            echo "### a2aipfs task lifecycle — FAIL (asker=$ASK_EXIT witness=${WITNESS:-none} attest=${TASKFILE:-no} verify=${VERIFY:-skipped})" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::A2AIPFS TASK FAIL — asker=$ASK_EXIT witness=${WITNESS:-none} attest=${TASKFILE:-no} verify=${VERIFY:-skipped} ipfs=${IPFS:-none}"
+            echo "### a2aipfs task lifecycle — FAIL (asker=$ASK_EXIT witness=${WITNESS:-none} attest=${TASKFILE:-no} verify=${VERIFY:-skipped} ipfs=${IPFS:-none})" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/task-witness.log" >> "$GITHUB_STEP_SUMMARY"
             echo '' >> "$GITHUB_STEP_SUMMARY"

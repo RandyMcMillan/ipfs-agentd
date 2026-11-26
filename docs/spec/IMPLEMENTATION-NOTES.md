@@ -171,3 +171,18 @@ never worked** until the task leg exercised them for real. Also:
 
 Remaining gaps: Agent Card IPNS publishing; M4 spec freeze (needs two
 independent implementations green).
+
+## 10. Verification ON IPFS — landed
+
+The witness now refuses to attest until the exchange verifies **on IPFS**:
+each envelope's canonical body is handed to the node's own helia DAG store
+(`@helia/dag-json`): `dag.add` makes IPFS compute the content id and it must
+equal the envelope's claimed `id` (§2.2), then `dag.get(id)` must resolve
+through the blockstore. Only then does the attest go out, now carrying
+`payload.ipfs.verified` + the verified CIDs (query/answer attest) or
+`record.ipfs.verified` (task attest). The CI legs (mesh, copilot, task)
+require the witness's `IPFS VERIFIED` log lines AND the payload flag in
+their verdicts; `test/a2aipfs-task-verify.mjs` and the e2es independently
+re-run the helia add+get round-trip on every embedded envelope. No extra
+daemon — every protocol node already is an IPFS node (helia), so
+verification happens on the IPFS stack the network actually runs.
