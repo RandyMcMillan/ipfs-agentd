@@ -928,10 +928,12 @@ jobs:
           if [ "$ATTEST" = "yes" ]; then
             node -e "const a=require('$RUNNER_TEMP/attest.json');if(!a.payload?.ipfs?.verified)process.exit(1)" || IPFS=fail
           fi
-          if [ "$ASK_EXIT" = "0" ] && [ "$WITNESS" = "pass" ] && [ "$ATTEST" = "yes" ] && [ "$IPFS" = "pass" ]; then
+          CARD=""
+          if grep -q 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/a2a-asker.log" 2>/dev/null; then CARD=pass; fi
+          if [ "$ASK_EXIT" = "0" ] && [ "$WITNESS" = "pass" ] && [ "$ATTEST" = "yes" ] && [ "$IPFS" = "pass" ] && [ "$CARD" = "pass" ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
             echo a2aipfs-mesh > "$RUNNER_TEMP/beam-pass"
-            echo "::notice::A2AIPFS MESH PASS — signed query/answer exchange over the cold public mesh, witness attestation produced and verified ON IPFS"
+            echo "::notice::A2AIPFS MESH PASS — signed query/answer exchange over the cold public mesh, witness attestation produced and verified ON IPFS, Agent Card resolved over IPNS"
             echo "### a2aipfs mesh conformance — PASS" >> "$GITHUB_STEP_SUMMARY"
             echo 'asker-captured answer:' >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -945,10 +947,14 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             grep 'IPFS VERIFIED' "$RUNNER_TEMP/a2a-witness.out" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo 'agent card over IPNS (asker log):' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/a2a-asker.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "passed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::A2AIPFS MESH FAIL — asker=$ASK_EXIT witness=${WITNESS:-none} attest=${ATTEST:-no} ipfs=${IPFS:-none}"
-            echo "### a2aipfs mesh conformance — FAIL (asker=$ASK_EXIT witness=${WITNESS:-none} attest=${ATTEST:-no} ipfs=${IPFS:-none})" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::A2AIPFS MESH FAIL — asker=$ASK_EXIT witness=${WITNESS:-none} attest=${ATTEST:-no} ipfs=${IPFS:-none} card=${CARD:-none}"
+            echo "### a2aipfs mesh conformance — FAIL (asker=$ASK_EXIT witness=${WITNESS:-none} attest=${ATTEST:-no} ipfs=${IPFS:-none} card=${CARD:-none})" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/a2a-witness.log" >> "$GITHUB_STEP_SUMMARY"
             echo '' >> "$GITHUB_STEP_SUMMARY"
@@ -1114,10 +1120,12 @@ jobs:
           if [ "$ATTEST" = "yes" ]; then
             node -e "const a=require('$RUNNER_TEMP/a2a-attest.json');if(!a.payload?.ipfs?.verified)process.exit(1)" || IPFS=fail
           fi
-          if [ "$VERDICT" = "pass" ] && [ "$ASK_CAPTURED" = "true" ] && [ "$ATTEST" = "yes" ] && [ "$DELEGATED" = "yes" ] && [ "$IPFS" = "pass" ]; then
+          CARD=""
+          if grep -q 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/copilot-a2a-asker.log" 2>/dev/null; then CARD=pass; fi
+          if [ "$VERDICT" = "pass" ] && [ "$ASK_CAPTURED" = "true" ] && [ "$ATTEST" = "yes" ] && [ "$DELEGATED" = "yes" ] && [ "$IPFS" = "pass" ] && [ "$CARD" = "pass" ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
             echo a2aipfs-copilot > "$RUNNER_TEMP/beam-pass"
-            echo "::notice::A2AIPFS COPILOT PASS — two Copilot agents exchanged signed a2aipfs query/answer envelopes; witness attestation verified the responder identity"
+            echo "::notice::A2AIPFS COPILOT PASS — two Copilot agents exchanged signed a2aipfs query/answer envelopes; witness attestation verified the responder identity; Agent Card resolved over IPNS"
             echo "### a2aipfs over Copilot — PASS" >> "$GITHUB_STEP_SUMMARY"
             echo 'asker-captured answer:' >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -1127,10 +1135,14 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             cat "$RUNNER_TEMP/a2a-attest.json" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo 'agent card over IPNS (asker log):' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/copilot-a2a-asker.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "passed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::A2AIPFS COPILOT FAIL — witness=$VERDICT asker-captured=${ASK_CAPTURED:-false} attest=${ATTEST:-no} delegated-identity=${DELEGATED:-no} ipfs=${IPFS:-none}"
-            echo "### a2aipfs over Copilot — FAIL (witness=$VERDICT asker-captured=${ASK_CAPTURED:-false} attest=${ATTEST:-no} delegated-identity=${DELEGATED:-no} ipfs=${IPFS:-none})" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::A2AIPFS COPILOT FAIL — witness=$VERDICT asker-captured=${ASK_CAPTURED:-false} attest=${ATTEST:-no} delegated-identity=${DELEGATED:-no} ipfs=${IPFS:-none} card=${CARD:-none}"
+            echo "### a2aipfs over Copilot — FAIL (witness=$VERDICT asker-captured=${ASK_CAPTURED:-false} attest=${ATTEST:-no} delegated-identity=${DELEGATED:-no} ipfs=${IPFS:-none} card=${CARD:-none})" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/a2a-witness.log" >> "$GITHUB_STEP_SUMMARY"
             echo '' >> "$GITHUB_STEP_SUMMARY"
@@ -1627,11 +1639,13 @@ jobs:
           if [ "$TASKFILE" = "yes" ]; then
             if node test/a2aipfs-task-verify.mjs "$RUNNER_TEMP/task-attest.json" >"$RUNNER_TEMP/task-verify.out" 2>&1; then VERIFY=pass; else VERIFY=fail; fi
           fi
+          CARD=""
+          if grep -q 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/task-asker.log" 2>/dev/null; then CARD=pass; fi
           if [ "$ASK_EXIT" = "0" ] && grep -q "task complete: received 5 chunks" "$RUNNER_TEMP/task-asker.out" \
-            && [ "$WITNESS" = "pass" ] && [ "$TASKFILE" = "yes" ] && [ "$VERIFY" = "pass" ] && [ "$IPFS" = "pass" ]; then
+            && [ "$WITNESS" = "pass" ] && [ "$TASKFILE" = "yes" ] && [ "$VERIFY" = "pass" ] && [ "$IPFS" = "pass" ] && [ "$CARD" = "pass" ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
             echo a2aipfs-task > "$RUNNER_TEMP/beam-pass"
-            echo "::notice::A2AIPFS TASK PASS — task → 5 hash-chained stream-chunks over the direct stream → acks → task-state done, witness attested ON IPFS, independent verify green"
+            echo "::notice::A2AIPFS TASK PASS — task → 5 hash-chained stream-chunks over the direct stream → acks → task-state done, witness attested ON IPFS, independent verify green, Agent Card resolved over IPNS"
             echo "### a2aipfs task lifecycle — PASS" >> "$GITHUB_STEP_SUMMARY"
             echo 'asker verdict line:' >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -1645,10 +1659,14 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             grep 'IPFS VERIFIED' "$RUNNER_TEMP/task-witness.out" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo 'agent card over IPNS (asker log):' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/task-asker.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "passed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::A2AIPFS TASK FAIL — asker=$ASK_EXIT witness=${WITNESS:-none} attest=${TASKFILE:-no} verify=${VERIFY:-skipped} ipfs=${IPFS:-none}"
-            echo "### a2aipfs task lifecycle — FAIL (asker=$ASK_EXIT witness=${WITNESS:-none} attest=${TASKFILE:-no} verify=${VERIFY:-skipped} ipfs=${IPFS:-none})" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::A2AIPFS TASK FAIL — asker=$ASK_EXIT witness=${WITNESS:-none} attest=${TASKFILE:-no} verify=${VERIFY:-skipped} ipfs=${IPFS:-none} card=${CARD:-none}"
+            echo "### a2aipfs task lifecycle — FAIL (asker=$ASK_EXIT witness=${WITNESS:-none} attest=${TASKFILE:-no} verify=${VERIFY:-skipped} ipfs=${IPFS:-none} card=${CARD:-none})" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             tail -n 30 "$RUNNER_TEMP/task-witness.log" >> "$GITHUB_STEP_SUMMARY"
             echo '' >> "$GITHUB_STEP_SUMMARY"

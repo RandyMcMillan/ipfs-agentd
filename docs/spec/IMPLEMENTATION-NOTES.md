@@ -169,8 +169,7 @@ CI leg `a2aipfs-task` runs it on the cold public mesh.
 never worked** until the task leg exercised them for real. Also:
 `dialProtocol` wants a **PeerId** (or multiaddr object), not a string.
 
-Remaining gaps: Agent Card IPNS publishing; M4 spec freeze (needs two
-independent implementations green).
+Remaining gaps: M4 spec freeze (needs two independent implementations green).
 
 ## 10. Verification ON IPFS — landed
 
@@ -186,3 +185,46 @@ their verdicts; `test/a2aipfs-task-verify.mjs` and the e2es independently
 re-run the helia add+get round-trip on every embedded envelope. No extra
 daemon — every protocol node already is an IPFS node (helia), so
 verification happens on the IPFS stack the network actually runs.
+
+
+## 11. Agent Card over IPNS (§6) — landed
+
+Every role announces a content-addressed Agent Card: the card is a dag-json
+object stored in the node's own helia DAG store (`cardCid = dag.add(card)`),
+the announce envelope carries both `payload.card` (signed) and
+`payload.cardCid`, and the same record is published to **IPNS under the
+node's own libp2p peer key** — so the IPNS name *is* the peer identity and
+resolving it proves the card came from that key. Resolution is
+`@helia/ipns` with the **pubsub router only** (`ipns(helia, { routers:
+[pubsub(helia)] })`): the factory's default DHT router throws
+`this.routing.put is not a function` in client mode, and every node here
+runs DHT client mode.
+
+Hard-won behavior, in the order it bit:
+
+1. **`PublishError.NoPeersSubscribedToTopic`** — a pubsub IPNS put reaches
+   only peers that were subscribed to `/ipns/<key>` *before* the put. The
+   announce envelope is what makes peers subscribe, so early puts fail
+   harmlessly and later puts land. Nodes republish on a schedule
+   (record republishes at +3/6/10/16/24/36/50 s, all with an
+   `AbortSignal.timeout(6000)` so a dead mesh can't hang a role).
+2. **Seen-dedup silently drops republishes of the same envelope id.**
+   Gossipsub receivers cache envelope ids; re-sending the identical
+   announce does nothing. Republishes must build a FRESH envelope
+   (`announce(card, true)` — new `ts` → new `id` → new sig) or peers that
+   missed the first announce never learn the IPNS name exists.
+3. **Role exits kill republish timers.** An asker that got its answer
+   would `process.exit` while late joiners still needed its record; card
+   resolution is awaited (`awaitCards`) before exit.
+4. **Content compare must use dag-json bytes,** not `JSON.stringify` —
+   key order differs across encode paths and produced false MISMATCHes
+   on identical cards.
+
+The asker resolves each announced peer's name and checks the resolved CID
+equals the announced `cardCid` and the dag-json bytes match the signed
+`payload.card` (`CARD RESOLVED via IPNS <peer>… → <cid> (content matches
+signed card)` on stderr). The CI legs (mesh, copilot, task) require a
+`CARD RESOLVED via IPNS` line in the asker log as part of the verdict,
+alongside the IPNS verification. The e2es assert the asker resolved the
+*answering* peer's name specifically — matching by 12-char peer prefix —
+not just any card.

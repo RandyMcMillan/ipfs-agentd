@@ -54,6 +54,8 @@ import { peerIdFromString } from '@libp2p/peer-id'
 import { multiaddr } from '@multiformats/multiaddr'
 import { privateKeyFromProtobuf } from '@libp2p/crypto/keys'
 import { dagJson as heliaDagJson } from '@helia/dag-json'
+import { ipns as makeIpns } from '@helia/ipns'
+import { pubsub as ipnsPubsubRouter } from '@helia/ipns/routing'
 
 /* libp2p 3.5.1 keeps the node's private key as an internal component (the
  * PeerId object is public-key-only). Resolve it once, with fallbacks. */
@@ -248,10 +250,74 @@ async function publish (env) {
   await node.services.pubsub.publish(topic, enc.encode(JSON.stringify(env)))
 }
 
-async function announce (card) {
-  const env = await buildEnvelope('announce', { card: card ?? defaultCard() })
+async function announce (card, isRepub = false) {
+  const c = card ?? defaultCard()
+  /* the card itself goes on IPFS: content-addressed, its CID is embedded
+   * in the signed announce payload so resolvers can verify both */
+  const cardCid = await ipfsDag.add(c)
+  const env = await buildEnvelope('announce', { card: c, cardCid: cardCid.toString() })
   await publish(env)
-  log('announce published on ' + (env.topic || TOPIC))
+  log('announce published on ' + (env.topic || TOPIC) + ' card ' + cardCid)
+  publishCardRecord(cardCid)
+  /* §6/§5: republish the IPNS record AND the announce itself a few times —
+   * the announce is what makes peers subscribe to our IPNS topic, and the
+   * first publish can fire before the gossipsub mesh grafts (same cold-mesh
+   * flake class as queries); the record republishes then find subscribers.
+   * Republishes build FRESH envelopes (new ts → new id): a receiver that
+   * missed the first announce has it in `seen` by id, so re-sending the same
+   * envelope would be silently dropped. */
+  if (!isRepub) {
+    for (const d of [3000, 6000, 10000, 16000, 24000, 36000, 50000]) {
+      setTimeout(() => { publishCardRecord(cardCid).catch(() => {}) }, d).unref()
+    }
+    for (const d of [4000, 9000, 18000]) {
+      setTimeout(() => { announce(c, true).then(() => log('announce republished (' + d + 'ms)'), () => {}) }, d).unref()
+    }
+  }
+}
+
+/* §6: the Agent Card is published to IPNS under the node's own peer key —
+ * the IPNS name IS the peer identity, so resolving it binds the card to
+ * the peer that announced it. Uses a pubsub-router-only IPNS instance:
+ * the factory's default routers include the DHT router, whose put throws
+ * in client mode ("this.routing.put is not a function") — the error
+ * rejects publish() even though the pubsub record lands. */
+const cardIpns = makeIpns(ctx.helia, { routers: [ipnsPubsubRouter(ctx.helia)] })
+
+async function publishCardRecord (cardCid) {
+  try {
+    await cardIpns.publish(nodeKey, cardCid, { signal: AbortSignal.timeout(6000) })
+    log('CARD PUBLISHED via IPNS ' + peerId.slice(0, 12) + '… → ' + cardCid)
+  } catch (e) {
+    log('IPNS card publish failed: ' + (e?.message || e))
+  }
+}
+
+/* resolve another peer's card through IPNS and cross-check it against the
+ * signed announce: the resolved CID must equal the announced cardCid and
+ * the content at that address must match the signed card. */
+async function resolveCardWithRetry (env, tries = 25, gapMs = 2000) {
+  const want = env.payload?.cardCid
+  if (!want || env.from === peerId) return false
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await cardIpns.resolve(peerIdFromString(env.from).publicKey, { signal: AbortSignal.timeout(8000) })
+      if (res.cid.toString() !== want) {
+        log('CARD MISMATCH via IPNS ' + env.from.slice(0, 12) + '… → ' + res.cid + ' != announced ' + want)
+        return false
+      }
+      const got = await ipfsDag.get(CID.parse(want))
+      /* compare canonical dag-json bytes — key order in the decoded object
+       * is not significant, JSON.stringify would false-mismatch */
+      const match = Buffer.compare(Buffer.from(dagJson.encode(got)), Buffer.from(dagJson.encode(env.payload.card))) === 0
+      log('CARD RESOLVED via IPNS ' + env.from.slice(0, 12) + '… → ' + res.cid + (match ? ' (content matches signed card)' : ' (CONTENT MISMATCH)'))
+      return match
+    } catch {
+      await new Promise((r) => setTimeout(r, gapMs))
+    }
+  }
+  log('CARD UNRESOLVED via IPNS ' + env.from.slice(0, 12) + '… (' + tries + ' tries)')
+  return false
 }
 
 function defaultCard () {
@@ -379,6 +445,19 @@ function askCopilot (question) {
 }
 
 /* ---------- asker ---------- */
+const cardPending = new Set() /* peers whose card resolution is in flight */
+const cardDone = new Set()
+async function trackCard (env) {
+  if (env.from === peerId || cardDone.has(env.from) || !env.payload?.cardCid) return
+  cardPending.add(env.from)
+  try { if (await resolveCardWithRetry(env)) cardDone.add(env.from) } catch {}
+  cardPending.delete(env.from)
+}
+async function awaitCards (ms = 30000) {
+  const t0 = Date.now()
+  while (cardPending.size > 0 && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 500))
+}
+
 async function runAsker () {
   let answered = false
   let publishes = 0
@@ -402,7 +481,8 @@ async function runAsker () {
     for (const d of [1000, 3000]) {
       setTimeout(() => { publish(query).then(() => log('query grace-republished (' + d + 'ms)'), () => {}) }, d).unref()
     }
-    setTimeout(() => process.exit(0), 4500).unref()
+    /* give the §6 card resolutions a bounded window, then leave */
+    awaitCards(45000).finally(() => { setTimeout(() => process.exit(0), 4500).unref() })
   }
 
   node.services.pubsub.addEventListener('message', (evt) => {
@@ -411,6 +491,11 @@ async function runAsker () {
       try { env = JSON.parse(dec.decode(evt.detail.data)) } catch { return }
       if (!env || env.a2aipfs !== VERSION || seen.has(env.id)) return
       seen.add(env.id)
+      if (env.type === 'announce') {
+        const why = await verifyEnvelope(env)
+        if (!why) trackCard(env)
+        return
+      }
       if (env.type !== 'answer' || env.ref !== query.id) return
       if (env.from === peerId) return /* §8: no self-answers */
       const why = await verifyEnvelope(env)
@@ -499,7 +584,8 @@ async function runTaskAsker () {
     for (const d of [1000, 3000]) {
       setTimeout(() => { publish(task).then(() => log('task grace-republished (' + d + 'ms)'), () => {}) }, d).unref()
     }
-    setTimeout(() => process.exit(0), 4500).unref()
+    /* give the §6 card resolutions a bounded window, then leave */
+    awaitCards(45000).finally(() => { setTimeout(() => process.exit(0), 4500).unref() })
   }
 
   node.services.pubsub.addEventListener('message', (evt) => {
@@ -508,6 +594,11 @@ async function runTaskAsker () {
       try { env = JSON.parse(dec.decode(evt.detail.data)) } catch { return }
       if (!env || env.a2aipfs !== VERSION || seen.has(env.id)) return
       seen.add(env.id)
+      if (env.type === 'announce') {
+        const why = await verifyEnvelope(env)
+        if (!why) trackCard(env)
+        return
+      }
       if (env.type === 'task-state' && env.ref === task.id && env.payload?.task?.state === 'done' && !doneState) {
         const why = await verifyEnvelope(env)
         if (why) { log('task-state rejected: ' + why); return }
@@ -699,7 +790,7 @@ async function runWitness () {
       console.log('WITNESS PASS: ' + why)
       console.error('WITNESS PASS: ' + why)
       console.log('ATTEST: ' + attest.id)
-      setTimeout(() => process.exit(0), 800).unref()
+      awaitCards(35000).finally(() => { setTimeout(() => process.exit(0), 800).unref() })
       return
     }
   }
@@ -740,7 +831,7 @@ async function runWitness () {
       const why = 'witness observed task ' + taskId.slice(0, 16) + '… from ' + t.from.slice(0, 12) + '… and task-state done from ' + d.from.slice(0, 12) + '… — distinct peers, both signatures verified (§8,§9)'
       console.log('WITNESS PASS: task lifecycle — ' + why)
       console.error('WITNESS PASS: task lifecycle — ' + why)
-      setTimeout(() => process.exit(0), 800).unref()
+      awaitCards(35000).finally(() => { setTimeout(() => process.exit(0), 800).unref() })
       return
     }
   }
@@ -756,6 +847,9 @@ async function runWitness () {
         if (why) { log('task not admissible: ' + why); return }
         tasks.set(env.id, env)
         log('TASK observed from ' + env.from.slice(0, 12) + '… id ' + env.id.slice(0, 16) + '…')
+      } else if (env.type === 'announce') {
+        const why = await verifyEnvelope(env)
+        if (!why) trackCard(env)
       } else if (env.type === 'task-state' && env.ref) {
         const why = await verifyEnvelope(env)
         if (why) { log('task-state not admissible: ' + why); return }
