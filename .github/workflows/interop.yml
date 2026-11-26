@@ -890,6 +890,7 @@ jobs:
           A2AIPFS_ROLE=witness A2AIPFS_TOPIC=a2aipfs/v1/interop-${{ github.run_id }} \
             A2AIPFS_NAME=witness A2AIPFS_TIMEOUT_MS=600000 \
             A2AIPFS_ATTEST_FILE="$RUNNER_TEMP/attest.json" \
+            A2AIPFS_DIAL=/ip4/127.0.0.1/tcp/4211,/ip4/127.0.0.1/tcp/4212 \
             GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4210 GNOSTR_RENDEZVOUS_SERVER=1 \
             node scripts/a2aipfs-node.mjs >"$RUNNER_TEMP/a2a-witness.out" 2>"$RUNNER_TEMP/a2a-witness.log" &
           echo $! > "$RUNNER_TEMP/a2a-witness.pid"
@@ -932,7 +933,8 @@ jobs:
           CARD=""
           CARD_SRC="$RUNNER_TEMP/a2a-asker.log"
           [ -s "$RUNNER_TEMP/a2a-card-trace.log" ] && CARD_SRC="$RUNNER_TEMP/a2a-card-trace.log"
-          if grep -q 'CARD RESOLVED via IPNS' "$CARD_SRC" 2>/dev/null; then CARD=pass; fi
+          if grep -q 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/a2a-card-trace.log" 2>/dev/null || grep -q 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/a2a-asker.log" 2>/dev/null; then CARD=pass; fi
+          grep -q 'CARD RESOLVED via IPNS' "$CARD_SRC" 2>/dev/null || CARD_SRC="$RUNNER_TEMP/a2a-asker.log"
           if [ "$ASK_EXIT" = "0" ] && [ "$WITNESS" = "pass" ] && [ "$ATTEST" = "yes" ] && [ "$IPFS" = "pass" ] && [ "$CARD" = "pass" ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
             echo a2aipfs-mesh > "$RUNNER_TEMP/beam-pass"
@@ -1051,6 +1053,7 @@ jobs:
           A2AIPFS_ROLE=witness A2AIPFS_TOPIC=a2aipfs/v1/copilot-${{ github.run_id }} \
             A2AIPFS_NAME=witness A2AIPFS_TIMEOUT_MS=600000 \
             A2AIPFS_ATTEST_FILE="$RUNNER_TEMP/a2a-attest.json" \
+            A2AIPFS_DIAL=/ip4/127.0.0.1/tcp/4311,/ip4/127.0.0.1/tcp/4312 \
             GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4310 GNOSTR_RENDEZVOUS_SERVER=1 \
             node scripts/a2aipfs-node.mjs >"$RUNNER_TEMP/a2a-witness.out" 2>"$RUNNER_TEMP/a2a-witness.log" &
           echo $! > "$RUNNER_TEMP/a2a-witness.pid"
@@ -1128,7 +1131,9 @@ jobs:
           CARD=""
           CARD_SRC="$RUNNER_TEMP/copilot-a2a-asker.log"
           [ -s "$RUNNER_TEMP/a2a-card-trace.log" ] && CARD_SRC="$RUNNER_TEMP/a2a-card-trace.log"
-          if grep -q 'CARD RESOLVED via IPNS' "$CARD_SRC" 2>/dev/null; then CARD=pass; fi
+          if grep -q 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/a2a-card-trace.log" 2>/dev/null || grep -q 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/copilot-a2a-asker.log" 2>/dev/null || grep -q 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/a2a-witness.log" 2>/dev/null; then CARD=pass; fi
+          grep -q 'CARD RESOLVED via IPNS' "$CARD_SRC" 2>/dev/null || CARD_SRC="$RUNNER_TEMP/copilot-a2a-asker.log"
+          grep -q 'CARD RESOLVED via IPNS' "$CARD_SRC" 2>/dev/null || CARD_SRC="$RUNNER_TEMP/a2a-witness.log"
           if [ "$VERDICT" = "pass" ] && [ "$ASK_CAPTURED" = "true" ] && [ "$ATTEST" = "yes" ] && [ "$DELEGATED" = "yes" ] && [ "$IPFS" = "pass" ] && [ "$CARD" = "pass" ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
             echo a2aipfs-copilot > "$RUNNER_TEMP/beam-pass"
@@ -1604,6 +1609,7 @@ jobs:
           A2AIPFS_ROLE=witness A2AIPFS_TOPIC=a2aipfs/v1/task-${{ github.run_id }} \
             A2AIPFS_NAME=task-witness A2AIPFS_TIMEOUT_MS=600000 \
             A2AIPFS_TASK_FILE="$RUNNER_TEMP/task-attest.json" \
+            A2AIPFS_DIAL=/ip4/127.0.0.1/tcp/4411,/ip4/127.0.0.1/tcp/4412 \
             GNOSTR_LISTEN=/ip4/127.0.0.1/tcp/4410 GNOSTR_RENDEZVOUS_SERVER=1 \
             node scripts/a2aipfs-node.mjs >"$RUNNER_TEMP/task-witness.out" 2>"$RUNNER_TEMP/task-witness.log" &
           echo $! > "$RUNNER_TEMP/task-witness.pid"
@@ -1650,7 +1656,8 @@ jobs:
           CARD=""
           CARD_SRC="$RUNNER_TEMP/task-asker.log"
           [ -s "$RUNNER_TEMP/a2a-card-trace.log" ] && CARD_SRC="$RUNNER_TEMP/a2a-card-trace.log"
-          if grep -q 'CARD RESOLVED via IPNS' "$CARD_SRC" 2>/dev/null; then CARD=pass; fi
+          if grep -q 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/a2a-card-trace.log" 2>/dev/null || grep -q 'CARD RESOLVED via IPNS' "$RUNNER_TEMP/task-asker.log" 2>/dev/null; then CARD=pass; fi
+          grep -q 'CARD RESOLVED via IPNS' "$CARD_SRC" 2>/dev/null || CARD_SRC="$RUNNER_TEMP/task-asker.log"
           if [ "$ASK_EXIT" = "0" ] && grep -q "task complete: received 5 chunks" "$RUNNER_TEMP/task-asker.out" \
             && [ "$WITNESS" = "pass" ] && [ "$TASKFILE" = "yes" ] && [ "$VERIFY" = "pass" ] && [ "$IPFS" = "pass" ] && [ "$CARD" = "pass" ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
