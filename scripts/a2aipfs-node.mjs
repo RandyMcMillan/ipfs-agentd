@@ -41,7 +41,7 @@
  *   A2AIPFS_REPUBLISH_MS (default 15000, §5 floor 10s),
  *   plus the node factory env (GNOSTR_LISTEN, GNOSTR_RENDEZVOUS_SERVER, …).
  */
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -286,10 +286,30 @@ const cardIpns = makeIpns(ctx.helia, { routers: [ipnsPubsubRouter(ctx.helia)] })
 
 async function publishCardRecord (cardCid) {
   try {
-    await cardIpns.publish(nodeKey, cardCid, { signal: AbortSignal.timeout(6000) })
+    /* hard race cap: gossipsub.publish throws fast when no mesh peers are
+     * subscribed (PublishError.NoPeersSubscribedToTopic) but can HANG once
+     * a peer appears if a stream stalls — the abort signal is not honored
+     * mid-write (observed in CI run 45746088806: every put after the first
+     * subscriber subscribed settled neither way, no log line at all). The
+     * race guarantees the attempt always settles and is logged. */
+    await Promise.race([
+      cardIpns.publish(nodeKey, cardCid, { signal: AbortSignal.timeout(6000) }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('publish hard-capped at 7s')), 7000))
+    ])
     log('CARD PUBLISHED via IPNS ' + peerId.slice(0, 12) + '… → ' + cardCid)
   } catch (e) {
     log('IPNS card publish failed: ' + (e?.message || e))
+  }
+}
+
+/* card-resolution lines go to stderr AND, when A2AIPFS_CARD_TRACE is set,
+ * to a dedicated file — the copilot leg's asker runs inside the Copilot CLI
+ * session, so its stderr never reaches the teed session log the CI verdict
+ * greps. The trace file makes the verdict independent of the harness. */
+function cardLog (msg) {
+  log(msg)
+  if (process.env.A2AIPFS_CARD_TRACE) {
+    try { appendFileSync(process.env.A2AIPFS_CARD_TRACE, msg + '\n') } catch {}
   }
 }
 
@@ -303,20 +323,20 @@ async function resolveCardWithRetry (env, tries = 25, gapMs = 2000) {
     try {
       const res = await cardIpns.resolve(peerIdFromString(env.from).publicKey, { signal: AbortSignal.timeout(8000) })
       if (res.cid.toString() !== want) {
-        log('CARD MISMATCH via IPNS ' + env.from.slice(0, 12) + '… → ' + res.cid + ' != announced ' + want)
+        cardLog('CARD MISMATCH via IPNS ' + env.from.slice(0, 12) + '… → ' + res.cid + ' != announced ' + want)
         return false
       }
       const got = await ipfsDag.get(CID.parse(want))
       /* compare canonical dag-json bytes — key order in the decoded object
        * is not significant, JSON.stringify would false-mismatch */
       const match = Buffer.compare(Buffer.from(dagJson.encode(got)), Buffer.from(dagJson.encode(env.payload.card))) === 0
-      log('CARD RESOLVED via IPNS ' + env.from.slice(0, 12) + '… → ' + res.cid + (match ? ' (content matches signed card)' : ' (CONTENT MISMATCH)'))
+      cardLog('CARD RESOLVED via IPNS ' + env.from.slice(0, 12) + '… → ' + res.cid + (match ? ' (content matches signed card)' : ' (CONTENT MISMATCH)'))
       return match
     } catch {
       await new Promise((r) => setTimeout(r, gapMs))
     }
   }
-  log('CARD UNRESOLVED via IPNS ' + env.from.slice(0, 12) + '… (' + tries + ' tries)')
+  cardLog('CARD UNRESOLVED via IPNS ' + env.from.slice(0, 12) + '… (' + tries + ' tries)')
   return false
 }
 
@@ -422,7 +442,7 @@ async function runResponder () {
       if (why) { log('query rejected: ' + why); return }
       log('query from ' + env.from.slice(0, 16) + '… — answering')
       await handleQuery(env, null)
-    })().catch(() => {})
+    })().catch((e) => log('responder handler error: ' + (e?.message || e)))
   })
 
   await Promise.all(subs.map((t) => node.services.pubsub.subscribe(t)))
@@ -447,15 +467,26 @@ function askCopilot (question) {
 /* ---------- asker ---------- */
 const cardPending = new Set() /* peers whose card resolution is in flight */
 const cardDone = new Set()
+let foreignAnnounces = 0 /* announces from OTHER peers seen by this node */
 async function trackCard (env) {
   if (env.from === peerId || cardDone.has(env.from) || !env.payload?.cardCid) return
+  foreignAnnounces++
   cardPending.add(env.from)
   try { if (await resolveCardWithRetry(env)) cardDone.add(env.from) } catch {}
   cardPending.delete(env.from)
 }
 async function awaitCards (ms = 30000) {
   const t0 = Date.now()
-  while (cardPending.size > 0 && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 500))
+  /* NEVER resolve on an empty snapshot: on the cold public mesh a foreign
+   * announce can take many seconds to arrive, and exiting at that point
+   * kills every pending republish timer and in-flight resolution (observed
+   * in CI run 45746088806: asker/witness dead ~10s, zero card resolutions).
+   * Floor at 12s so the +4s/+9s announce republishes are covered, then leave
+   * once nothing is pending. */
+  while (Date.now() - t0 < ms) {
+    if (foreignAnnounces > 0 && cardPending.size === 0 && Date.now() - t0 >= 12000) return
+    await new Promise((r) => setTimeout(r, 500))
+  }
 }
 
 async function runAsker () {
@@ -478,7 +509,7 @@ async function runAsker () {
      * into our mesh when the exchange happened gets two more chances at
      * the query before we leave — observed flakiness was the asker exiting
      * before the witness saw anything. */
-    for (const d of [1000, 3000]) {
+    for (const d of [1000, 3000, 8000, 15000, 25000, 40000]) {
       setTimeout(() => { publish(query).then(() => log('query grace-republished (' + d + 'ms)'), () => {}) }, d).unref()
     }
     /* give the §6 card resolutions a bounded window, then leave */
@@ -501,7 +532,7 @@ async function runAsker () {
       const why = await verifyEnvelope(env)
       if (why) { log('answer rejected: ' + why); return }
       capture(env)
-    })().catch(() => {})
+    })().catch((e) => log('asker handler error: ' + (e?.message || e)))
   })
 
   /* §7: direct-stream answers */
@@ -581,7 +612,7 @@ async function runTaskAsker () {
     log('TASK COMPLETE: ' + chunks.size + ' chunks, seq 0..' + lastSeq + ' continuous, chain verified, all signatures verified; done observed from ' + doneState.from.slice(0, 12) + '…')
     /* the verdict line: single-line, greppable, on stdout */
     process.stdout.write('task complete: received ' + chunks.size + ' chunks, seq 0..' + lastSeq + ' continuous, hash chain verified, all signatures verified (§3.6,§9)\n')
-    for (const d of [1000, 3000]) {
+    for (const d of [1000, 3000, 8000, 15000, 25000, 40000]) {
       setTimeout(() => { publish(task).then(() => log('task grace-republished (' + d + 'ms)'), () => {}) }, d).unref()
     }
     /* give the §6 card resolutions a bounded window, then leave */
@@ -607,7 +638,7 @@ async function runTaskAsker () {
         log('task-state done observed from ' + env.from.slice(0, 12) + '… chunks=' + env.payload.task.result?.chunks)
         completeIfReady()
       }
-    })().catch(() => {})
+    })().catch((e) => log('task-asker handler error: ' + (e?.message || e)))
   })
 
   /* §3.6/§7: worker dials back and streams hash-chained chunks */
@@ -633,7 +664,7 @@ async function runTaskAsker () {
           completeIfReady()
         }
       })
-    })().catch(() => {})
+    })().catch((e) => log('task-worker stream handler error: ' + (e?.message || e)))
   })
 
   await Promise.all(subs.map((t) => node.services.pubsub.subscribe(t)))
@@ -733,7 +764,7 @@ async function runWorker () {
       }
       log('task from ' + env.from.slice(0, 12) + '… — executing')
       await handleTask(env)
-    })().catch(() => {})
+    })().catch((e) => log('worker handler error: ' + (e?.message || e)))
   })
 
   await Promise.all(subs.map((t) => node.services.pubsub.subscribe(t)))
@@ -856,6 +887,10 @@ async function runWitness () {
         if (!states.has(env.ref)) states.set(env.ref, [])
         states.get(env.ref).push(env)
         log('TASK-STATE ' + env.payload.task.state + ' observed for ' + env.ref.slice(0, 16) + '… from ' + env.from.slice(0, 12) + '…')
+        /* arrival order is not guaranteed: on the cold mesh the task-state
+         * can land BEFORE the task envelope (the task publishes stop after
+         * their grace window; states keep flowing). Never skip silently. */
+        if (!tasks.has(env.ref)) log('task-state observed for ' + env.ref.slice(0, 16) + '… but the task envelope itself has not been seen yet — attesting when it lands')
         await maybeTaskAttest()
       }
       if (env.type === 'query') {
@@ -872,7 +907,11 @@ async function runWitness () {
         }
       }
       await maybeAttest()
-    })().catch(() => {})
+      /* task envelopes can arrive AFTER their task-states — re-run the
+       * task attest check on every message, not only on task-state arrival
+       * (CI run 45746088806: done observed first, task never re-checked) */
+      await maybeTaskAttest()
+    })().catch((e) => log('witness handler error: ' + (e?.message || e)))
   })
 
   await Promise.all(subs.map((t) => node.services.pubsub.subscribe(t)))
