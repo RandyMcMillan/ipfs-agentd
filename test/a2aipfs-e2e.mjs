@@ -159,6 +159,25 @@ try {
     check('attest id resolves through IPFS (helia dag.add+dag.get, independent)', ipfsWhy === null, ipfsWhy || attest.id.slice(0, 20))
   }
   check('witness logged IPFS VERIFIED for the exchange', (witness.stdout_.match(/IPFS VERIFIED/g) || []).length >= 2)
+  /* §6 Agent Card over IPNS: the card must be published under the
+   * responder's peer key AND the asker must resolve THE RESPONDER's name
+   * to the announced cardCid — anchoring the card to the answering peer */
+  /* the §6 property end to end: the responder's IPNS name (its peer key)
+   * resolves to the announced cardCid and the content at that address
+   * matches the signed card — evidence: the asker's own resolution line */
+  const responderPeer = (responder.stderr_.match(/peer id: (\S+)/) || [])[1]
+  const shortPeer = responderPeer ? responderPeer.slice(0, 12) : null
+  const announcedCid = (responder.stderr_.match(/announce published on \S+ card (\S+)/) || [])[1]
+  const resolved = shortPeer ? [...asker.stderr_.matchAll(new RegExp('CARD RESOLVED via IPNS ' + shortPeer + '… → (\\S+) \\(content matches', 'g'))].map((m) => m[1]) : []
+  const published = [...responder.stderr_.matchAll(/CARD PUBLISHED via IPNS \S+… → (\S+)/g)].map((m) => m[1])
+  check('responder announced a content-addressed Agent Card (§6)', !!announcedCid, announcedCid?.slice(0, 24))
+  check('asker resolved the RESPONDER name via IPNS (§6)', resolved.length >= 1, resolved[0]?.slice(0, 24))
+  check('IPNS-resolved CID == announced cardCid (§6)', resolved.includes(announcedCid))
+  if (published.length) step('responder IPNS publish trace: ' + published.length + ' record(s) landed')
+  for (const [n, p] of [['responder', responder], ['witness', witness], ['asker', asker]]) {
+    const lines = p.stderr_.split('\n').filter((l) => /card|IPNS/i.test(l))
+    if (lines.length) step(n + ' card trace: ' + lines.map((l) => l.replace(/^e2e-\w+: /, '')).join(' | '))
+  }
 } catch (e) {
   failed++
   step('EXCEPTION ' + (e?.stack || e))

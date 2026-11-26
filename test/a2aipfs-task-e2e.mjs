@@ -150,8 +150,9 @@ try {
 
   /* task attest: independent crypto + chain recompute on every envelope */
   check('task attest file written', existsSync(taskFile))
+  let rec = null
   if (existsSync(taskFile)) {
-    const rec = JSON.parse(readFileSync(taskFile, 'utf8'))
+    rec = JSON.parse(readFileSync(taskFile, 'utf8'))
     check('task attest has task + states + peers', !!rec.task && Array.isArray(rec.states) && !!rec.taskerPeer && !!rec.workerPeer && !!rec.witnessPeer)
     check('task attest task id matches observed', rec.task.id === taskId)
     check('task attest distinct peers (§8)', new Set([rec.taskerPeer, rec.workerPeer, rec.witnessPeer]).size === 3)
@@ -169,6 +170,19 @@ try {
       if (why) { ipfsAllOk = false; step('  envelope ' + e.type + ' IPFS FAIL: ' + why); break }
     }
     check('every attest envelope resolves through IPFS (helia dag.add+dag.get, independent)', ipfsAllOk, all.length + ' envelopes')
+  }
+  /* §6 Agent Card over IPNS: worker's card published under its peer key,
+   * the asker must resolve THE WORKER's name to the announced cardCid */
+  {
+    const workerPeer = (worker.stderr_.match(/peer id: (\S+)/) || [])[1]
+    const shortPeer = workerPeer ? workerPeer.slice(0, 12) : null
+    const announcedCid = (worker.stderr_.match(/announce published on \S+ card (\S+)/) || [])[1]
+    const resolved = shortPeer ? [...asker.stderr_.matchAll(new RegExp('CARD RESOLVED via IPNS ' + shortPeer + '… → (\\S+) \\(content matches', 'g'))].map((m) => m[1]) : []
+    const published = [...worker.stderr_.matchAll(/CARD PUBLISHED via IPNS \S+… → (\S+)/g)].map((m) => m[1])
+    check('worker announced a content-addressed Agent Card (§6)', !!announcedCid, announcedCid?.slice(0, 24))
+    check('asker resolved the WORKER name via IPNS (§6)', resolved.length >= 1, resolved[0]?.slice(0, 24))
+    check('IPNS-resolved CID == announced cardCid (§6)', resolved.includes(announcedCid))
+    if (published.length) step('worker IPNS publish trace: ' + published.length + ' record(s) landed')
     check('states cover accepted + done from the worker', ['accepted', 'done'].every((s) => rec.states.some((x) => x.payload.task.state === s && x.from === rec.workerPeer)))
     const done = rec.states.find((x) => x.payload.task.state === 'done')
     check('done result carries chunk count', done?.payload.task.result?.chunks === N)
