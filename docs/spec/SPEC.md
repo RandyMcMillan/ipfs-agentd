@@ -178,6 +178,20 @@ Gossipsub MAY drop a single publish into a pruned mesh. Therefore:
   payload;
 - receivers MUST deduplicate by `id`, not by payload bytes.
 
+Two republish classes exist:
+
+- **Same-id grace republish**: re-sending the identical envelope during a
+  bounded delivery-assurance window while the exchange is unresolved
+  (no matching `answer`, `task-state`, or ack observed). The window and
+  count are bounded by §9.
+- **Freshness-preserving republish**: re-sending the same payload with a
+  new `ts` — hence a new `id` — keeping `ref` unchanged. Used when
+  receivers' id-deduplication would silently drop same-id re-sends (e.g.
+  republishing an `answer` whose `ref` still points at the original
+  query). The §9 per-id bound does not apply because each re-send is a
+  distinct envelope; witnesses MUST correlate such answers by `ref`, not
+  by `id`.
+
 ## 6. Agent Card
 
 An Agent Card (A2A discovery document semantics) is represented as IPLD
@@ -232,8 +246,14 @@ for the same exchange id SHOULD be dropped after first verification.
   exchanges) and SHOULD refuse `task` delegation from untrusted peers per
   local policy. Nothing in this spec establishes global identity — that is
   deliberately out of scope (DID layers MAY be layered on via the Card).
-- **Spam/DoS**: republish intervals MUST be bounded (a sender MUST NOT
-  republish more than once per 10s per message id). Rate limiting is
+- **Spam/DoS**: republish volume MUST be bounded. A sender MUST NOT
+  republish the same envelope id more than 6 times within any 40-second
+  delivery-assurance window, and MUST NOT republish any id at all once
+  the exchange is resolved. Steady-state republishing of one id (outside
+  an active window) MUST NOT exceed once per 10s. Freshness-preserving
+  republishes (§5) are distinct envelopes: the per-id bound does not
+  apply to them, but they count toward the same 6-in-40s envelope
+  budget. Rate limiting is
   implementation-specific; RLN-style membership proofs MAY be layered on
   the topic later.
 
