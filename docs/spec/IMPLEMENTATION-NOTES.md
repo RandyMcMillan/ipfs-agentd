@@ -228,3 +228,38 @@ signed card)` on stderr). The CI legs (mesh, copilot, task) require a
 alongside the IPNS verification. The e2es assert the asker resolved the
 *answering* peer's name specifically — matching by 12-char peer prefix —
 not just any card.
+
+
+## 12. Cold-mesh CI failure modes (run 45746088806) — fixed
+
+All three a2aipfs legs failed on the merged §6 despite local greens. The
+artifacts (zip sha256 == API digest, verified) told the story:
+
+1. **`awaitCards` resolved on an empty snapshot.** Its loop was
+   `while (cardPending.size > 0 && …)` — if no foreign announce had arrived
+   yet when the asker got its answer (cold-mesh propagation takes seconds),
+   it returned immediately and the asker/witness exited ~10 s, killing every
+   pending republish timer and in-flight resolution. Zero `CARD RESOLVED`
+   anywhere. Fix: never exit before a 12 s floor (covers the +4 s/+9 s
+   announce republishes), then leave once nothing is pending.
+2. **IPNS publish can hang without settling.** `gossipsub.publish` throws
+   fast with `NoPeersSubscribedToTopic` when no mesh peer is subscribed, but
+   once a subscriber appears a stalled stream hangs the promise — and the
+   abort signal is not honored mid-write. Every put after the first
+   subscriber subscribed settled neither way (no `CARD PUBLISHED`, no
+   failure log). Fix: `Promise.race` against a 7 s hard cap so every attempt
+   settles and is logged.
+3. **Witness never re-checked the task lifecycle.** `maybeTaskAttest` ran
+   only on task-state arrival; when `done` landed before the task envelope
+   (task grace republishes stopped at +3 s, before cold-mesh grafting), the
+   witness logged "done observed" and silently skipped — and even when the
+   task arrived later, the handler only re-ran the *query* attest check.
+   Fix: run both attest checks on every message, log done-for-unknown-task,
+   extend task/query grace republishes to +40 s.
+4. **Silent `.catch(() => {})` on every pubsub handler** hid all of the
+   above. All six handlers now log their errors.
+
+Also: the copilot leg's asker runs inside the Copilot CLI session, so its
+stderr never reaches the teed session log — card resolutions now also append
+to `A2AIPFS_CARD_TRACE`, and all three CI verdicts grep the trace file
+first (asker log as fallback).
