@@ -702,6 +702,13 @@ async function runWorker () {
     await publish(accepted)
     await publish(accepted) /* §5: cold-mesh grace twin */
     log('task-state accepted published')
+    /* the witness may subscribe seconds after we accept (cold-mesh grafting);
+     * a single accepted publish is attest-visible data — keep re-announcing
+     * it so the attest record carries the full accepted→done lifecycle
+     * (CI run 45750462062: accepted lost, verifier failed the record) */
+    for (const d of [2000, 6000, 12000, 20000]) {
+      setTimeout(() => { publish(accepted).then(() => log('accepted republished (' + d + 'ms)'), () => {}) }, d).unref()
+    }
 
     /* §3.6: build the ordered hash-chained payload. The chain is part of
      * the signed payload, so it must be final BEFORE buildEnvelope. */
