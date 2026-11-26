@@ -238,13 +238,18 @@ async function runResponder () {
   const ANSWER_TIMES = Number(process.env.A2AIPFS_ANSWER_TIMES || 3)
 
   async function answerText (question) {
+    let body
     if (process.env.A2AIPFS_DELEGATE === 'copilot') {
-      const delegated = await askCopilot(question)
-      if (delegated === null) return null
-      return delegated
+      body = await askCopilot(question)
+      if (body === null) return null
+    } else {
+      body = 'I am ' + NAME + ' answering: ' + question.slice(0, 80)
     }
-    return 'I am ' + NAME + ' (peer ' + peerId.slice(0, 12) + '…, host ' + os.hostname() +
-      '): ' + question.slice(0, 80) + ' — I run on ' + os.platform() + '/' + os.arch()
+    /* identity-bearing prefix: the asker prints this text verbatim and the
+     * CI verdict greps it; the attest carries the same name in its signed
+     * payload.facts */
+    return 'answer from ' + NAME + ' (peer ' + peerId.slice(0, 12) + '…, host ' + os.hostname() +
+      '): ' + body + ' — I run on ' + os.platform() + '/' + os.arch()
   }
 
   async function handleQuery (env, replyStream) {
