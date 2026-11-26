@@ -263,3 +263,26 @@ Also: the copilot leg's asker runs inside the Copilot CLI session, so its
 stderr never reaches the teed session log — card resolutions now also append
 to `A2AIPFS_CARD_TRACE`, and all three CI verdicts grep the trace file
 first (asker log as fallback).
+
+## 13. Republish classes (§5, §9) — spec amendment
+
+CI forensics (runs 45746088806, 45750462062, 45751518390, 45755441986) showed
+every cold-mesh loss happened because a same-id republish was dropped by
+receiver dedup or arrived while the mesh was pruned — never because of spam.
+§9's original flat rule ("MUST NOT republish more than once per 10s per
+message id") made the delivery-assurance schedules technically non-compliant.
+
+Amendment (SPEC.md §5/§9): two republish classes.
+
+| envelope | class | schedule (ms) | count ≤40s |
+|---|---|---|---|
+| query, task | same-id grace | 1000, 3000, 8000, 15000, 25000, 40000 | 6 |
+| task-state accepted | same-id grace | 2000, 6000, 12000, 20000 | 4 |
+| task-state done | same-id grace | 3000, 8000, 15000, 25000, 40000 | 5 |
+| answer | freshness-preserving (new id, same ref) | 3000, 8000, 15000, 25000, 40000 | 5 |
+| announce, card record | freshness-preserving | 4000, 9000, 18000 / 3000…50000 | 3 / 7 |
+
+The card record schedule (7 puts over 50 s) is IPNS publish, not gossipsub —
+outside §9's envelope budget; it is still hard-capped per-put at 7 s.
+Witnesses correlate fresh answers by `ref`, so attestation is unaffected.
+All schedules stop on resolution (answer observed / acked / done).
