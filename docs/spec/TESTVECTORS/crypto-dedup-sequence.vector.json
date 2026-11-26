@@ -1,0 +1,50 @@
+{
+  "vector": "crypto-dedup-sequence",
+  "expect": "dedup-drop",
+  "sequence": [
+    {
+      "a2aipfs": "1.0",
+      "type": "announce",
+      "from": "12D3KooWNZeTqEK6huWLyZS3gbZZNrFJPbBUikci6KYGKD13rMYj",
+      "ts": 1730000000000,
+      "payload": {
+        "card": {
+          "name": "vector-agent",
+          "peerId": "12D3KooWNZeTqEK6huWLyZS3gbZZNrFJPbBUikci6KYGKD13rMYj",
+          "protocolVersion": "1.0",
+          "supportedTypes": [
+            "query",
+            "answer"
+          ],
+          "maxEnvelopeSize": 1048576,
+          "relayAddrs": []
+        }
+      },
+      "topic": "a2aipfs/v1/vectors",
+      "id": "baguqeeradpaxxdyoeinqxmiy43yureww2lgip27jigsde74cq6n5ivcg3weq",
+      "sig": "US_-HDm83NdMBK-sEfgsN7DFJWo5E_MllAKE_kf38ZaS2_esmObzFOqprdXVFJjx0FlDJhZBWKu7RsSnk3-ETBg=="
+    },
+    {
+      "a2aipfs": "1.0",
+      "type": "announce",
+      "from": "12D3KooWNZeTqEK6huWLyZS3gbZZNrFJPbBUikci6KYGKD13rMYj",
+      "ts": 1730000000000,
+      "payload": {
+        "card": {
+          "name": "vector-agent",
+          "peerId": "12D3KooWNZeTqEK6huWLyZS3gbZZNrFJPbBUikci6KYGKD13rMYj",
+          "protocolVersion": "1.0",
+          "supportedTypes": [
+            "query",
+            "answer"
+          ],
+          "maxEnvelopeSize": 1048576,
+          "relayAddrs": []
+        }
+      },
+      "topic": "a2aipfs/v1/vectors",
+      "id": "baguqeeradpaxxdyoeinqxmiy43yureww2lgip27jigsde74cq6n5ivcg3weq",
+      "sig": "US_-HDm83NdMBK-sEfgsN7DFJWo5E_MllAKE_kf38ZaS2_esmObzFOqprdXVFJjx0FlDJhZBWKu7RsSnk3-ETBg=="
+    }
+  ]
+}

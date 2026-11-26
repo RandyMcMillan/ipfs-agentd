@@ -139,6 +139,7 @@ function ruleViolation (e) {
   if (typeof e.sig !== 'string' || !e.sig) return 'missing sig (§9)'
   if (e.topic !== undefined && !String(e.topic).startsWith('a2aipfs/v1/')) return 'topic outside a2aipfs/v1/ (§4)'
   if (!e.payload || typeof e.payload !== 'object') return 'missing payload (§2)'
+  if (canonicalBytes(e).length > 1048576) return 'envelope exceeds 1 MiB gossipsub limit (§2.4)'
   switch (e.type) {
     case 'query': if (typeof e.payload.question !== 'string' || !e.payload.question) return 'query without payload.question (§3.2)'; break
     case 'answer':

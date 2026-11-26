@@ -63,10 +63,13 @@ const files = readdirSync(dir).filter((f) => f.endsWith('.vector.json'))
 ok(files.length >= 8, files.length + ' vector files present')
 
 for (const f of files) {
+  if (f.startsWith('crypto-')) continue /* signed vectors — the crypto verifier owns those */
   const v = JSON.parse(readFileSync(join(dir, f), 'utf8'))
+  if (v.sequence) continue /* dedup sequences are checked by the crypto verifier */
   const why = violation(v.envelope)
   if (v.expect === 'accept') ok(why === null, v.vector + ' accepted' + (why ? ' — VIOLATION: ' + why : ''))
   else if (v.expect === 'ignore') ok(why !== null, v.vector + ' ignored (' + why + ')')
+  else if (v.expect === 'reject') ok(why !== null, v.vector + ' rejected (' + why + ')')
   else { fail++; console.error('vectors: FAIL ' + v.vector + ' has bad expect: ' + v.expect) }
 }
 

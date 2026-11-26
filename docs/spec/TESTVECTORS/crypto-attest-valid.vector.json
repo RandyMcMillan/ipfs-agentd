@@ -1,0 +1,34 @@
+{
+  "vector": "crypto-attest-valid",
+  "expect": "accept",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "attest",
+    "from": "12D3KooWRHpVoxmdsjea2Ev5B4RqoAxLPbh8bCLGMmeY2jiFM3Ty",
+    "ts": 1730000000000,
+    "payload": {
+      "exchange": {
+        "requestId": "baguqeera6yvcbsqsrllx5w53brexeypbn25k5eln6kmmr46lspm3frfu2f4q",
+        "responseId": "baguqeeradtuje6bubolnel5i2twnfimx22zt5ut4i4ungopqk7apnmd4z52q"
+      },
+      "askerPeer": "12D3KooWNZeTqEK6huWLyZS3gbZZNrFJPbBUikci6KYGKD13rMYj",
+      "responderPeer": "12D3KooWCwat5Efi3qAdcezPYfzxck9j6i5ZHekR68ZPxm1AWHrr",
+      "witnessPeer": "12D3KooWRHpVoxmdsjea2Ev5B4RqoAxLPbh8bCLGMmeY2jiFM3Ty",
+      "topic": "a2aipfs/v1/vectors",
+      "observedAt": 1730000001000,
+      "requestText": "what is interop?",
+      "answerText": "interop is two independent implementations talking.",
+      "ipfs": {
+        "verified": true,
+        "cids": {
+          "request": "baguqeera6yvcbsqsrllx5w53brexeypbn25k5eln6kmmr46lspm3frfu2f4q",
+          "response": "baguqeeradtuje6bubolnel5i2twnfimx22zt5ut4i4ungopqk7apnmd4z52q"
+        },
+        "via": "helia dag-json add+get"
+      }
+    },
+    "topic": "a2aipfs/v1/vectors",
+    "id": "baguqeeraxzvmxhicaekip2ogruftmbtqeixdlvznthguzop6mewhuhr4ckba",
+    "sig": "US05NfVlq0X_a0mfisFD5sVqWLZvvOd1v2BHmq0Gzd3aNmvn_Q87Q2xBZxABKtrLljnkiaXiRgn5_YxazRqOHCA=="
+  }
+}

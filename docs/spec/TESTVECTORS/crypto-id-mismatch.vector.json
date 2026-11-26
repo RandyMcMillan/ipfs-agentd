@@ -1,0 +1,20 @@
+{
+  "vector": "crypto-id-mismatch",
+  "expect": "reject",
+  "rejectRule": "id",
+  "envelope": {
+    "a2aipfs": "1.0",
+    "type": "query",
+    "from": "12D3KooWNZeTqEK6huWLyZS3gbZZNrFJPbBUikci6KYGKD13rMYj",
+    "ts": 1730000000000,
+    "payload": {
+      "question": "what is interop?",
+      "tags": [
+        "vectors"
+      ]
+    },
+    "topic": "a2aipfs/v1/vectors",
+    "id": "baguqeeradtuje6bubolnel5i2twnfimx22zt5ut4i4ungopqk7apnmd4z52q",
+    "sig": "UV1RYtYv26RpVdVaog6_lEkU8Kna-E62g_pGyRFo9ewtXGjJBV67BYrvspZQzVRHLMwp42oREfi_dwvjwk3u7Dw=="
+  }
+}
