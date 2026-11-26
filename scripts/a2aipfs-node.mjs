@@ -21,12 +21,24 @@
  *             topic, verify both envelopes per §9, build and sign the
  *             attest (§8), publish it, write it to A2AIPFS_ATTEST_FILE,
  *             print the verdict on BOTH stdout and stderr (the workflow
- *             greps witness.out); exit 0/1.
+ *             greps witness.out); exit 0/1. Also observes the task
+ *             lifecycle (task + task-state done from distinct peers) and
+ *             writes a task attest (verbatim signed envelopes) to
+ *             A2AIPFS_TASK_FILE.
+ *   worker    task executor: on a signature-valid task (§3.4, state
+ *             submitted), publish task-state accepted, dial the task's
+ *             replyTo addr, deliver the result as an ordered hash-chained
+ *             stream-chunk sequence over the direct stream (§3.6, §7),
+ *             collect acks (§3.7), then publish task-state done with the
+ *             chunk count + final chain (§3.5); exit 0/1.
  *
  * Env: A2AIPFS_TOPIC (default a2aipfs/v1/global), A2AIPFS_NAME,
  *   A2AIPFS_QUESTION, A2AIPFS_TIMEOUT_MS (default 300000),
  *   A2AIPFS_DIAL (comma multiaddrs), A2AIPFS_DELEGATE,
- *   A2AIPFS_ATTEST_FILE, A2AIPFS_REPUBLISH_MS (default 15000, §5 floor 10s),
+ *   A2AIPFS_ATTEST_FILE, A2AIPFS_TASK_FILE (task-lifecycle attest),
+ *   A2AIPFS_TASK=1 (asker runs the task flow instead of query/answer),
+ *   A2AIPFS_TASK_TEXT, A2AIPFS_CHUNKS (stream-chunk count, default 5),
+ *   A2AIPFS_REPUBLISH_MS (default 15000, §5 floor 10s),
  *   plus the node factory env (GNOSTR_LISTEN, GNOSTR_RENDEZVOUS_SERVER, …).
  */
 import { mkdtempSync, writeFileSync } from 'node:fs'
@@ -68,8 +80,8 @@ const log = (m) => process.stderr.write(NAME + ': ' + m + '\n')
 const enc = new TextEncoder()
 const dec = new TextDecoder()
 
-if (!['asker', 'responder', 'witness'].includes(ROLE)) {
-  process.stderr.write('a2aipfs-node: A2AIPFS_ROLE must be asker|responder|witness\n')
+if (!['asker', 'responder', 'witness', 'worker'].includes(ROLE)) {
+  process.stderr.write('a2aipfs-node: A2AIPFS_ROLE must be asker|responder|witness|worker\n')
   process.exit(2)
 }
 
@@ -131,6 +143,8 @@ function ruleViolation (e) {
       if (e.ref === undefined) return 'answer without correlation ref (§2.3)'
       break
     case 'task': if (e.payload.task?.state !== 'submitted') return 'task initial state must be submitted (§3.4)'; break
+    case 'task-state': if (!e.payload.task || typeof e.payload.task.state !== 'string') return 'task-state without payload.task.state (§3.5)'; break
+    case 'ack': if (typeof e.payload.received !== 'string') return 'ack without payload.received (§3.7)'; break
     case 'stream-chunk':
       if (!Number.isInteger(e.payload.seq) || e.payload.seq < 0) return 'stream-chunk without seq (§3.6)'
       if (typeof e.payload.last !== 'boolean') return 'stream-chunk without last flag (§3.6)'
@@ -162,18 +176,27 @@ async function verifyEnvelope (e) {
   }
 }
 
-/* ---------- §7 direct stream (NDJSON) ---------- */
+/* ---------- §7 direct stream (NDJSON) ----------
+ * libp2p 3.5.x streams are evented message streams: send() to write,
+ * `for await … of stream` to read, closeWrite() to half-close. The
+ * {source,sink} Duplex facade does NOT exist on these objects — earlier
+ * code assumed it and the §7 paths silently no-op'd (caught exceptions). */
 
-async function writeNdjson (stream, obj) {
-  const bytes = enc.encode(JSON.stringify(obj) + '\n')
-  await stream.sink((async function * () { yield bytes })())
+function writeNdjson (stream, obj) {
+  stream.send(enc.encode(JSON.stringify(obj) + '\n'))
+}
+
+async function writeNdjsonMany (stream, objs) {
+  for (const o of objs) writeNdjson(stream, o)
+  try { await stream.closeWrite() } catch { /* already closing */ }
 }
 
 async function readNdjson (stream, onObj) {
   let buf = ''
   try {
-    for await (const chunk of stream.source) {
-      buf += dec.decode(chunk.subarray(), { stream: true })
+    for await (const chunk of stream) {
+      const u8 = chunk?.subarray ? chunk.subarray() : chunk
+      buf += dec.decode(u8, { stream: true })
       let i
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i).trim()
@@ -186,6 +209,12 @@ async function readNdjson (stream, onObj) {
       }
     }
   } catch { /* peer closed */ }
+}
+
+async function chainHex (prevHex, data) {
+  const prev = prevHex ? Buffer.from(prevHex, 'hex') : new Uint8Array(0)
+  const digest = await sha256.digest(new Uint8Array([...prev, ...enc.encode(data)]))
+  return Buffer.from(digest.bytes).toString('hex')
 }
 
 /* ---------- pubsub plumbing ---------- */
@@ -263,9 +292,10 @@ async function runResponder () {
     }, { ref: env.id })
     if (replyStream) {
       /* §7: direct-stream delivery gets an ack in at-least-once mode */
-      await writeNdjson(replyStream, ans)
+      writeNdjson(replyStream, ans)
       const ack = await buildEnvelope('ack', { received: env.id }, { ref: ans.id })
-      await writeNdjson(replyStream, ack)
+      writeNdjson(replyStream, ack)
+      try { await replyStream.closeWrite() } catch { /* already closing */ }
       log('answer + ack written to direct stream, ref ' + env.id.slice(0, 16) + '…')
     }
     await publish(ans)
@@ -385,8 +415,18 @@ async function runAsker () {
       if (directPeers.has(conn.remotePeer.toString())) continue
       directPeers.add(conn.remotePeer.toString())
       node.dialProtocol(conn.remotePeer, PROTO).then(async (stream) => {
-        await writeNdjson(stream, query)
+        writeNdjson(stream, query)
+        try { await stream.closeWrite() } catch { /* already closing */ }
         log('query pushed over direct stream to ' + conn.remotePeer.toString().slice(0, 12) + '…')
+        /* the answer comes back on the same stream */
+        await readNdjson(stream, async (obj) => {
+          if (obj?.a2aipfs !== VERSION || obj.type !== 'answer' || obj.ref !== query.id) return
+          if (seen.has(obj.id)) return
+          seen.add(obj.id)
+          const why = await verifyEnvelope(obj)
+          if (why) { log('stream answer rejected: ' + why); return }
+          capture(obj)
+        })
       }, () => {})
     }
   }
@@ -412,9 +452,189 @@ async function runAsker () {
   }, TIMEOUT_MS).unref()
 }
 
+/* ---------- task-mode asker (A2AIPFS_TASK=1) ---------- */
+async function runTaskAsker () {
+  const TASK_TEXT = process.env.A2AIPFS_TASK_TEXT || 'compute the interop payload and stream it back in ordered, hash-chained chunks'
+  const chunks = new Map() /* seq -> verified env */
+  const acks = []
+  let doneState = null
+  let completed = false
+  let publishes = 0
+
+  const replyTo = node.getMultiaddrs().map(String).find((a) => a.includes('/p2p/'))
+  const task = await buildEnvelope('task', { task: { state: 'submitted', text: TASK_TEXT, replyTo } })
+  log('task id: ' + task.id)
+
+  function completeIfReady () {
+    if (completed || !doneState) return
+    const lastSeq = Math.max(...chunks.keys())
+    if (!chunks.get(lastSeq)?.payload.last) return
+    for (let i = 0; i <= lastSeq; i++) if (!chunks.has(i)) return
+    completed = true
+    log('TASK COMPLETE: ' + chunks.size + ' chunks, seq 0..' + lastSeq + ' continuous, chain verified, all signatures verified; done observed from ' + doneState.from.slice(0, 12) + '…')
+    /* the verdict line: single-line, greppable, on stdout */
+    process.stdout.write('task complete: received ' + chunks.size + ' chunks, seq 0..' + lastSeq + ' continuous, hash chain verified, all signatures verified (§3.6,§9)\n')
+    for (const d of [1000, 3000]) {
+      setTimeout(() => { publish(task).then(() => log('task grace-republished (' + d + 'ms)'), () => {}) }, d).unref()
+    }
+    setTimeout(() => process.exit(0), 4500).unref()
+  }
+
+  node.services.pubsub.addEventListener('message', (evt) => {
+    (async () => {
+      let env
+      try { env = JSON.parse(dec.decode(evt.detail.data)) } catch { return }
+      if (!env || env.a2aipfs !== VERSION || seen.has(env.id)) return
+      seen.add(env.id)
+      if (env.type === 'task-state' && env.ref === task.id && env.payload?.task?.state === 'done' && !doneState) {
+        const why = await verifyEnvelope(env)
+        if (why) { log('task-state rejected: ' + why); return }
+        if (env.from === peerId) return
+        doneState = env
+        log('task-state done observed from ' + env.from.slice(0, 12) + '… chunks=' + env.payload.task.result?.chunks)
+        completeIfReady()
+      }
+    })().catch(() => {})
+  })
+
+  /* §3.6/§7: worker dials back and streams hash-chained chunks */
+  node.handle(PROTO, (stream) => {
+    let prevChain = null
+    ;(async () => {
+      await readNdjson(stream, async (obj) => {
+        if (obj?.a2aipfs !== VERSION || obj.type !== 'stream-chunk') return
+        if (obj.ref !== task.id) { log('stream-chunk rejected: wrong ref'); return }
+        if (chunks.has(obj.payload?.seq)) return
+        const why = await verifyEnvelope(obj)
+        if (why) { log('stream-chunk rejected: ' + why); return }
+        const seq = obj.payload.seq
+        const expected = await chainHex(seq === 0 ? null : prevChain, obj.payload.data)
+        if (obj.payload.chain !== expected) { log('stream-chunk ' + seq + ' rejected: chain does not recompute'); return }
+        prevChain = obj.payload.chain
+        chunks.set(seq, obj)
+        acks.push(await buildEnvelope('ack', { received: obj.id }, { ref: obj.id }))
+        log('chunk ' + (seq + 1) + ' verified (seq ' + seq + ', last=' + obj.payload.last + ')')
+        if (obj.payload.last) {
+          await writeNdjsonMany(stream, acks)
+          log(acks.length + ' ack(s) written to stream')
+          completeIfReady()
+        }
+      })
+    })().catch(() => {})
+  })
+
+  await Promise.all(subs.map((t) => node.services.pubsub.subscribe(t)))
+  await dialCoLocated()
+  await announce()
+  log('settling ' + SETTLE_MS + 'ms before first publish (mesh heartbeat)')
+  await new Promise((r) => setTimeout(r, SETTLE_MS))
+  await publish(task)
+  publishes++
+  log('task published (' + publishes + '): ' + TASK_TEXT.slice(0, 60) + '…')
+
+  const republish = setInterval(() => {
+    if (completed) return
+    publish(task).then(() => log('task republished (' + (++publishes) + ')'), () => {})
+  }, REPUBLISH_MS)
+  republish.unref()
+
+  setTimeout(() => {
+    if (!completed) { log('task not completed within the window (' + chunks.size + ' chunks)'); process.exit(1) }
+  }, TIMEOUT_MS).unref()
+}
+
+/* ---------- worker (task executor) ---------- */
+async function runWorker () {
+  const N = Math.max(Number(process.env.A2AIPFS_CHUNKS || 5), 1)
+  let handled = 0
+
+  async function handleTask (env) {
+    if (handled >= 1) return
+    handled++
+    const taskId = env.id
+    log('task accepted from ' + env.from.slice(0, 12) + '… — ' + N + ' chunks')
+
+    const accepted = await buildEnvelope('task-state', { task: { state: 'accepted' } }, { ref: taskId })
+    await publish(accepted)
+    await publish(accepted) /* §5: cold-mesh grace twin */
+    log('task-state accepted published')
+
+    /* §3.6: build the ordered hash-chained payload. The chain is part of
+     * the signed payload, so it must be final BEFORE buildEnvelope. */
+    const data = []
+    const chains = []
+    let chain = null
+    for (let i = 0; i < N; i++) {
+      data.push('chunk ' + i + '/' + N + ' from ' + NAME + ' (peer ' + peerId.slice(0, 12) + '…) for task ' + taskId.slice(0, 16) + '…')
+      chain = await chainHex(chain, data[i])
+      chains.push(chain)
+    }
+
+    /* §7: deliver over the direct stream to the asker's replyTo addr */
+    let acked = 0
+    const replyTo = env.payload.task.replyTo
+    try {
+      /* dial by peer id (extracted from the /p2p/ suffix) — the co-located
+       * dial loop already holds a connection; dialing the bare multiaddr
+       * returns a handle without stream.{sink,source} in libp2p 3.5.x */
+      const pm = replyTo.match(/\/p2p\/([^/]+)$/)
+      const stream = await node.dialProtocol(pm ? peerIdFromString(pm[1]) : multiaddr(replyTo), PROTO)
+      const ackReader = readNdjson(stream, async (obj) => {
+        if (obj?.a2aipfs !== VERSION || obj.type !== 'ack') return
+        const why = await verifyEnvelope(obj)
+        if (why) { log('ack rejected: ' + why); return }
+        acked++
+      }).catch(() => {})
+      const out = []
+      for (let i = 0; i < N; i++) {
+        out.push(await buildEnvelope('stream-chunk', { seq: i, last: i === N - 1, data: data[i], chain: chains[i] }, { ref: taskId }))
+      }
+      await writeNdjsonMany(stream, out)
+      log(N + ' chunk(s) written to stream for task ' + taskId.slice(0, 16) + '…')
+      await Promise.race([ackReader, new Promise((r) => setTimeout(r, 10000))])
+    } catch (err) {
+      log('stream delivery failed: ' + (err?.message || err))
+    }
+
+    const done = await buildEnvelope('task-state', { task: { state: 'done', result: { chunks: N, acked, chain } } }, { ref: taskId })
+    await publish(done)
+    log('task-state done published (chunks=' + N + ', acked=' + acked + ')')
+    for (const d of [3000, 8000]) {
+      setTimeout(() => { publish(done).then(() => log('done republished (' + d + 'ms)'), () => {}) }, d).unref()
+    }
+    setTimeout(() => { log('worker window over — task ' + (handled ? 'completed' : 'UNSOLVED')); process.exit(handled ? 0 : 1) }, 4500).unref()
+  }
+
+  node.services.pubsub.addEventListener('message', (evt) => {
+    (async () => {
+      let env
+      try { env = JSON.parse(dec.decode(evt.detail.data)) } catch { return }
+      if (!env || env.a2aipfs !== VERSION || seen.has(env.id)) return
+      seen.add(env.id)
+      if (env.type !== 'task' || env.from === peerId) return
+      const why = await verifyEnvelope(env)
+      if (why) { log('task rejected: ' + why); return }
+      if (typeof env.payload.task?.replyTo !== 'string' || !env.payload.task.replyTo.includes('/p2p/')) {
+        log('task rejected: no usable replyTo address')
+        return
+      }
+      log('task from ' + env.from.slice(0, 12) + '… — executing')
+      await handleTask(env)
+    })().catch(() => {})
+  })
+
+  await Promise.all(subs.map((t) => node.services.pubsub.subscribe(t)))
+  await dialCoLocated()
+  await announce({ name: NAME, worker: true, peerId, protocolVersion: VERSION, supportedTypes: TYPES })
+  log('worker up on ' + TOPIC)
+  setTimeout(() => { log('worker window over — no task seen'); process.exit(handled ? 0 : 1) }, TIMEOUT_MS).unref()
+}
+
 /* ---------- witness ---------- */
 async function runWitness () {
   const queries = new Map() /* id -> env */
+  const tasks = new Map() /* taskId -> env */
+  const states = new Map() /* taskId -> [task-state envs] */
   const done = { v: false }
 
   async function maybeAttest () {
@@ -455,12 +675,56 @@ async function runWitness () {
 
   done.answers = new Map() /* queryId -> answer env */
 
+  async function maybeTaskAttest () {
+    if (done.v) return
+    for (const [taskId, t] of tasks) {
+      const ss = states.get(taskId) || []
+      const d = ss.find((s) => s.payload.task.state === 'done')
+      if (!d) continue
+      const whyT = await verifyEnvelope(t)
+      const whyD = await verifyEnvelope(d)
+      if (whyT || whyD) continue
+      if (t.from === d.from) continue /* §8: distinct peers */
+      done.v = true
+      const record = {
+        task: t,
+        states: ss,
+        taskerPeer: t.from,
+        workerPeer: d.from,
+        witnessPeer: peerId,
+        topic: TOPIC,
+        observedAt: Date.now()
+      }
+      if (process.env.A2AIPFS_TASK_FILE) {
+        try { writeFileSync(process.env.A2AIPFS_TASK_FILE, JSON.stringify(record, null, 2)) } catch (e) { log('task attest file write failed: ' + e.message) }
+      }
+      const why = 'witness observed task ' + taskId.slice(0, 16) + '… from ' + t.from.slice(0, 12) + '… and task-state done from ' + d.from.slice(0, 12) + '… — distinct peers, both signatures verified (§8,§9)'
+      console.log('WITNESS PASS: task lifecycle — ' + why)
+      console.error('WITNESS PASS: task lifecycle — ' + why)
+      setTimeout(() => process.exit(0), 800).unref()
+      return
+    }
+  }
+
   node.services.pubsub.addEventListener('message', (evt) => {
     (async () => {
       let env
       try { env = JSON.parse(dec.decode(evt.detail.data)) } catch { return }
       if (!env || env.a2aipfs !== VERSION || seen.has(env.id)) return
       seen.add(env.id)
+      if (env.type === 'task') {
+        const why = await verifyEnvelope(env)
+        if (why) { log('task not admissible: ' + why); return }
+        tasks.set(env.id, env)
+        log('TASK observed from ' + env.from.slice(0, 12) + '… id ' + env.id.slice(0, 16) + '…')
+      } else if (env.type === 'task-state' && env.ref) {
+        const why = await verifyEnvelope(env)
+        if (why) { log('task-state not admissible: ' + why); return }
+        if (!states.has(env.ref)) states.set(env.ref, [])
+        states.get(env.ref).push(env)
+        log('TASK-STATE ' + env.payload.task.state + ' observed for ' + env.ref.slice(0, 16) + '… from ' + env.from.slice(0, 12) + '…')
+        await maybeTaskAttest()
+      }
       if (env.type === 'query') {
         const why = await verifyEnvelope(env)
         if (why) { log('query not admissible: ' + why); return }
@@ -484,14 +748,16 @@ async function runWitness () {
   log('witness up on ' + TOPIC)
   setTimeout(() => {
     if (!done.v) {
-      console.log('WITNESS FAIL: no admissible query+answer pair from distinct peers within the window')
-      console.error('WITNESS FAIL: no admissible query+answer pair from distinct peers within the window')
+      console.log('WITNESS FAIL: no admissible query+answer pair or task lifecycle from distinct peers within the window')
+      console.error('WITNESS FAIL: no admissible query+answer pair or task lifecycle from distinct peers within the window')
       process.exit(1)
     }
   }, TIMEOUT_MS).unref()
 }
 
 /* ---------- go ---------- */
-if (ROLE === 'asker') await runAsker()
+if (ROLE === 'asker' && process.env.A2AIPFS_TASK === '1') await runTaskAsker()
+else if (ROLE === 'asker') await runAsker()
 else if (ROLE === 'responder') await runResponder()
+else if (ROLE === 'worker') await runWorker()
 else await runWitness()
