@@ -355,9 +355,10 @@ async function dialCoLocated () {
   const addrs = (process.env.A2AIPFS_DIAL || process.env.CHAT_DIAL || '').split(',').map((s) => s.trim()).filter(Boolean)
   if (addrs.length === 0) return
   const pending = new Set(addrs)
+  const peerOf = (a) => (a.match(/\/p2p\/([^/]+)$/) || [])[1]
   const connected = (a) => {
-    const m = a.match(/\/p2p\/([^/]+)$/)
-    return m && node.getConnections().some((c) => c.remotePeer.toString() === m[1])
+    const p = peerOf(a)
+    return p && node.getConnections().some((c) => c.remotePeer.toString() === p)
   }
   for (let i = 0; i < 30 && pending.size > 0; i++) {
     for (const a of [...pending]) {
@@ -367,6 +368,23 @@ async function dialCoLocated () {
     if (pending.size > 0) await new Promise((r) => setTimeout(r, 1000))
   }
   for (const a of pending) log('dial gave up on ' + a)
+  /* protect + repair the co-located links: on the churny public swarm the
+   * connection manager prunes aggressively (observed: 114 → 67 connected
+   * mid-run, witness severed from the asker/responder it must observe —
+   * CI run 45751518390, zero envelopes seen). Tagged peers are last in
+   * line for pruning; the sweep re-dials any co-located peer that was cut. */
+  const coPeers = addrs.map(peerOf).filter(Boolean)
+  for (const p of coPeers) {
+    try { await node.services.connectionManager.tagPeer(peerIdFromString(p), 'a2aipfs-colocated', { value: 100, ttl: 30 * 60 * 1000 }) } catch {}
+  }
+  const sweep = setInterval(() => {
+    for (const a of addrs) {
+      if (connected(a)) continue
+      log('co-located link lost — re-dialing ' + a)
+      node.dial(multiaddr(a)).then(() => log('re-dialed ' + a), () => {})
+    }
+  }, 10000)
+  sweep.unref()
 }
 
 /* ---------- responder ---------- */
