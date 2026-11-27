@@ -92,7 +92,7 @@ on:
       verbose:
         description: 'Model beam: verbose agent chat — opencode streams --thinking + --print-logs; full transcripts land in the step summary; the full gnostr chat negotiation (question/answer envelopes) is echoed to the CI log + step summary'
         type: boolean
-        default: false
+        default: true
       bump_on_pass:
         description: 'Model beam: if any leg gets a WITNESS PASS, bump the patch version on master (unsigned bot commit — tags stay manual/signed)'
         type: boolean
