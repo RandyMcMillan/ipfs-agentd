@@ -96,7 +96,7 @@ on:
       bump_on_pass:
         description: 'Model beam: if any leg gets a WITNESS PASS, bump the patch version on master (unsigned bot commit — tags stay manual/signed)'
         type: boolean
-        default: true
+        default: false
 
 # one interop run at a time per ref: stacked pushes queue the model legs
 # behind the previous run's legs, the delayed questions land in a shrunken
